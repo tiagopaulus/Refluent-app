@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fluentFfmpeg = require('fluent-ffmpeg');
+require('dotenv').config();
 
 // Get the correct path for ffmpeg-static across development and production
 let ffmpegPath = require('ffmpeg-static');
