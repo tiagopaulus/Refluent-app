@@ -63,26 +63,21 @@ gizmoRenderer.setSize(80, 80);
 gizmoRenderer.domElement.id = 'gizmo-canvas';
 container.appendChild(gizmoRenderer.domElement);
 
-const sunBtnEl = document.createElement('div');
-sunBtnEl.id = 'sun-btn';
-sunBtnEl.style.cssText = 'position:absolute;bottom:100px;right:16px;width:36px;height:36px;border-radius:50%;background:#1a1a1a;border:1px solid #444;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;';
-sunBtnEl.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="9" cy="9" r="6" stroke="white" stroke-width="1.5"/>
-  <line x1="9" y1="2" x2="9" y2="0.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="9" y1="16" x2="9" y2="17.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="16" y1="9" x2="17.5" y2="9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="2" y1="9" x2="0.5" y2="9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="13.95" y1="4.05" x2="15.01" y2="2.99" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="4.05" y1="4.05" x2="2.99" y2="2.99" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="13.95" y1="13.95" x2="15.01" y2="15.01" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="4.05" y1="13.95" x2="2.99" y2="15.01" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-</svg>`;
-container.appendChild(sunBtnEl);
+const sunControlEl = document.createElement('div');
+sunControlEl.id = 'sun-btn';
+sunControlEl.style.cssText = 'position:absolute;top:60px;left:16px;width:64px;height:64px;z-index:100;cursor:crosshair;';
+const sunPreviewCanvas = document.createElement('canvas');
+sunPreviewCanvas.id = 'sun-preview';
+sunPreviewCanvas.width = 64;
+sunPreviewCanvas.height = 64;
+sunPreviewCanvas.style.cssText = 'display:block;border-radius:50%;';
+sunControlEl.appendChild(sunPreviewCanvas);
+container.appendChild(sunControlEl);
 
 const sunResetEl = document.createElement('div');
 sunResetEl.id = 'sun-reset';
 sunResetEl.setAttribute('data-i18n', 'resetLight');
-sunResetEl.style.cssText = 'position:absolute;bottom:84px;right:16px;font-size:10px;color:#555;text-align:center;width:36px;cursor:pointer;z-index:100;';
+sunResetEl.style.cssText = 'position:absolute;top:128px;left:16px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
 container.appendChild(sunResetEl);
 
 const origin = new THREE.Vector3(0, 0, 0);
@@ -121,6 +116,33 @@ gizmoScene.add(spriteZ);
 
 let updateCameraAnimation = null;
 
+function drawSunPreview() {
+  const canvas = document.getElementById('sun-preview');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 64, 64);
+  // Draw sphere
+  const grad = ctx.createRadialGradient(26, 26, 2, 32, 32, 20);
+  grad.addColorStop(0, '#555');
+  grad.addColorStop(1, '#1a1a1a');
+  ctx.beginPath();
+  ctx.arc(32, 32, 20, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // Project dirLight direction onto sphere surface
+  const dir = dirLight.position.clone().normalize();
+  const dotX = 32 + dir.x * 18;
+  const dotY = 32 - dir.y * 18;
+  // Draw light dot
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffe066';
+  ctx.shadowColor = '#ffe066';
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
 function animate() {
   requestAnimationFrame(animate);
   let animHandled = false;
@@ -131,13 +153,14 @@ function animate() {
     controls.update();
   }
   renderer.render(scene, camera);
-  
+
   // Sync Gizmo
   gizmoCamera.position.copy(camera.position);
   gizmoCamera.position.sub(controls.target);
   gizmoCamera.position.setLength(5);
   gizmoCamera.lookAt(0, 0, 0);
   gizmoRenderer.render(gizmoScene, gizmoCamera);
+  drawSunPreview();
 }
 debug('Calling animate()...');
 try {
@@ -1029,13 +1052,13 @@ if (getCurrentLang() === 'kr') {
 }
 
 // ---- Sun Light Drag Control ----
-const sunBtn = document.getElementById('sun-btn');
+const sunBtn = document.getElementById('sun-preview');
 const sunReset = document.getElementById('sun-reset');
 let sunDragging = false;
 
 const defaultLightPos = { x: 10, y: 20, z: 10 };
 
-sunBtn.title = getTranslation('sunTooltip');
+document.getElementById('sun-btn').title = getTranslation('sunTooltip');
 sunReset.innerText = getTranslation('resetLight');
 
 sunBtn.addEventListener('mousedown', () => {
