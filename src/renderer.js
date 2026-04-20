@@ -470,7 +470,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 document.getElementById('clear-scene-btn').addEventListener('click', () => {
-  if (confirm(getTranslation('confirmClear'))) {
+  if (confirm(getTranslation('confirmClearScene'))) {
     const toRemove = scene.children.filter(c => c.userData.isUserObject);
     toRemove.forEach(obj => scene.remove(obj));
     if (selectedObject) {
@@ -1133,4 +1133,150 @@ lensSelect.addEventListener('change', () => {
   document.getElementById('vignette-overlay').style.opacity = lens.vignette;
   document.getElementById('lens-hud').innerText = lens.name;
 });
+
+// ---- Mission 7: UX Pass ----
+
+// 1. Welcome overlay (first launch)
+if (!localStorage.getItem('first_launch')) {
+  const wSlides = [
+    { titleKey: 'slide1Title', bodyKey: 'slide1Body' },
+    { titleKey: 'slide2Title', bodyKey: 'slide2Body' },
+    { titleKey: 'slide3Title', bodyKey: 'slide3Body' },
+  ];
+  let wSlideIdx = 0;
+
+  const wOverlay = document.createElement('div');
+  wOverlay.id = 'welcome-overlay';
+  wOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:1000;display:flex;align-items:center;justify-content:center;';
+
+  const wCard = document.createElement('div');
+  wCard.style.cssText = 'background:#1e1e1e;border:1px solid #444;border-radius:12px;width:480px;max-width:90vw;padding:40px;color:white;';
+
+  const wCounter = document.createElement('div');
+  wCounter.style.cssText = 'font-size:11px;color:#888;margin-bottom:12px;';
+
+  const wTitle = document.createElement('h2');
+  wTitle.style.cssText = 'margin:0 0 16px 0;font-size:22px;font-weight:600;';
+
+  const wBody = document.createElement('p');
+  wBody.style.cssText = 'margin:0 0 32px 0;font-size:14px;color:#ccc;line-height:1.6;';
+
+  const wFooter = document.createElement('div');
+  wFooter.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+
+  const wSkip = document.createElement('span');
+  wSkip.style.cssText = 'font-size:12px;color:#555;cursor:pointer;text-decoration:underline;';
+  wSkip.innerText = getTranslation('welcomeSkip');
+
+  const wNext = document.createElement('button');
+  wNext.style.cssText = 'background:#007bff;color:white;border:none;border-radius:6px;padding:10px 24px;font-size:14px;cursor:pointer;';
+
+  wFooter.appendChild(wSkip);
+  wFooter.appendChild(wNext);
+  wCard.appendChild(wCounter);
+  wCard.appendChild(wTitle);
+  wCard.appendChild(wBody);
+  wCard.appendChild(wFooter);
+  wOverlay.appendChild(wCard);
+  document.body.appendChild(wOverlay);
+
+  const wDismiss = () => {
+    localStorage.setItem('first_launch', 'done');
+    wOverlay.style.display = 'none';
+  };
+
+  const wShowSlide = (idx) => {
+    wCounter.innerText = `${idx + 1} / ${wSlides.length}`;
+    wTitle.innerText = getTranslation(wSlides[idx].titleKey);
+    wBody.innerText = getTranslation(wSlides[idx].bodyKey);
+    wNext.innerText = idx === wSlides.length - 1 ? getTranslation('welcomeFinish') : getTranslation('welcomeNext');
+  };
+
+  wNext.addEventListener('click', () => {
+    if (wSlideIdx < wSlides.length - 1) {
+      wSlideIdx++;
+      wShowSlide(wSlideIdx);
+    } else {
+      wDismiss();
+    }
+  });
+  wSkip.addEventListener('click', wDismiss);
+  wShowSlide(0);
+}
+
+// 2. Tooltips
+const _tooltipMap = {
+  'add-box-btn': 'tooltipAddBox',
+  'add-sphere-btn': 'tooltipAddSphere',
+  'import-model-btn': 'tooltipImport',
+  'clear-scene-btn': 'tooltipClearScene',
+  'set-target-btn': 'tooltipSetTarget',
+  'record-btn': 'tooltipRec',
+  'lens-select': 'tooltipLens',
+  'sun-btn': 'tooltipSun',
+  'lang-en': 'tooltipLang',
+  'lang-kr': 'tooltipLang',
+  'cam-play-btn': 'tooltipPlay',
+  'cam-loop-btn': 'tooltipLoop',
+  'cam-stop-btn': 'tooltipStop',
+};
+Object.entries(_tooltipMap).forEach(([id, key]) => {
+  const el = document.getElementById(id);
+  if (el) el.title = getTranslation(key);
+});
+
+// 3. Camera movement descriptions
+[
+  ['cam-push-in', 'descPushIn'],
+  ['cam-pull-out', 'descPullOut'],
+  ['cam-dolly', 'descDolly'],
+  ['cam-pan', 'descPan'],
+  ['cam-tilt', 'descTilt'],
+].forEach(([radioId, descKey]) => {
+  const lbl = document.querySelector(`label[for="${radioId}"]`);
+  if (lbl) {
+    const span = document.createElement('span');
+    span.setAttribute('data-i18n', descKey);
+    span.style.cssText = 'display:block;font-size:10px;color:#888;line-height:1.3;margin-top:2px;font-weight:normal;white-space:normal;';
+    span.innerText = getTranslation(descKey);
+    lbl.appendChild(span);
+  }
+});
+
+// 4. Panel descriptions + axis label replacement in #scale-panel
+const _scalePanelEl = document.getElementById('scale-panel');
+if (_scalePanelEl) {
+  const _posTitleEl = _scalePanelEl.querySelector('.panel-section-title[data-i18n="position"]');
+  if (_posTitleEl) {
+    const d = document.createElement('div');
+    d.setAttribute('data-i18n', 'panelMove');
+    d.style.cssText = 'font-size:11px;color:#888;margin-bottom:4px;';
+    d.innerText = getTranslation('panelMove');
+    _posTitleEl.parentNode.insertBefore(d, _posTitleEl);
+  }
+  const _scaleTitleEl = _scalePanelEl.querySelector('.panel-section-title[data-i18n="scale"]');
+  if (_scaleTitleEl) {
+    const d = document.createElement('div');
+    d.setAttribute('data-i18n', 'panelResize');
+    d.style.cssText = 'font-size:11px;color:#888;margin-bottom:4px;';
+    d.innerText = getTranslation('panelResize');
+    _scaleTitleEl.parentNode.insertBefore(d, _scaleTitleEl);
+  }
+  [['pos-x','axisX'],['pos-y','axisY'],['pos-z','axisZ'],
+   ['scale-x','axisX'],['scale-y','axisY'],['scale-z','axisZ']].forEach(([inputId, i18nKey]) => {
+    const inp = document.getElementById(inputId);
+    if (inp) {
+      const row = inp.closest('.scale-row');
+      const lbl = row && row.querySelector('label');
+      if (lbl) {
+        lbl.setAttribute('data-i18n', i18nKey);
+        lbl.innerText = getTranslation(i18nKey);
+        lbl.style.width = '72px';
+        lbl.style.fontSize = '10px';
+        lbl.style.color = '#aaa';
+        lbl.style.whiteSpace = 'nowrap';
+      }
+    }
+  });
+}
 

@@ -476,3 +476,8 @@ button:active {
   font-size: 16px;
   margin: 0;
 }
+
+#clear-scene-btn:hover, #delete-btn:hover {
+  background: rgba(200, 50, 50, 0.2);
+  border-color: rgba(200, 50, 50, 0.5);
+}

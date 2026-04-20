@@ -14,6 +14,7 @@ function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -22,7 +23,9 @@ function createWindow() {
     }
   });
 
+  mainWindow.maximize();
   mainWindow.loadFile('src/index.html');
+  mainWindow.once('ready-to-show', () => mainWindow.show());
 }
 
 app.whenReady().then(() => {
