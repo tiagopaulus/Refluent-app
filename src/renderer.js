@@ -50,6 +50,10 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(10, 20, 10);
 scene.add(dirLight);
 
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+fillLight.position.set(-10, -5, -10);
+scene.add(fillLight);
+
 // ---- Gizmo Setup ----
 const gizmoScene = new THREE.Scene();
 const gizmoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
@@ -58,6 +62,28 @@ const gizmoRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 gizmoRenderer.setSize(80, 80);
 gizmoRenderer.domElement.id = 'gizmo-canvas';
 container.appendChild(gizmoRenderer.domElement);
+
+const sunBtnEl = document.createElement('div');
+sunBtnEl.id = 'sun-btn';
+sunBtnEl.style.cssText = 'position:absolute;bottom:100px;right:16px;width:36px;height:36px;border-radius:50%;background:#1a1a1a;border:1px solid #444;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:100;';
+sunBtnEl.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="9" cy="9" r="6" stroke="white" stroke-width="1.5"/>
+  <line x1="9" y1="2" x2="9" y2="0.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="9" y1="16" x2="9" y2="17.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="16" y1="9" x2="17.5" y2="9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="2" y1="9" x2="0.5" y2="9" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="13.95" y1="4.05" x2="15.01" y2="2.99" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="4.05" y1="4.05" x2="2.99" y2="2.99" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="13.95" y1="13.95" x2="15.01" y2="15.01" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="4.05" y1="13.95" x2="2.99" y2="15.01" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+</svg>`;
+container.appendChild(sunBtnEl);
+
+const sunResetEl = document.createElement('div');
+sunResetEl.id = 'sun-reset';
+sunResetEl.setAttribute('data-i18n', 'resetLight');
+sunResetEl.style.cssText = 'position:absolute;bottom:84px;right:16px;font-size:10px;color:#555;text-align:center;width:36px;cursor:pointer;z-index:100;';
+container.appendChild(sunResetEl);
 
 const origin = new THREE.Vector3(0, 0, 0);
 gizmoScene.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), origin, 0.8, 0xff0000, 0.2, 0.2));
@@ -1001,4 +1027,40 @@ if (getCurrentLang() === 'kr') {
   document.getElementById('lang-kr').classList.add('active');
   document.getElementById('lang-en').classList.remove('active');
 }
+
+// ---- Sun Light Drag Control ----
+const sunBtn = document.getElementById('sun-btn');
+const sunReset = document.getElementById('sun-reset');
+let sunDragging = false;
+
+const defaultLightPos = { x: 10, y: 20, z: 10 };
+
+sunBtn.title = getTranslation('sunTooltip');
+sunReset.innerText = getTranslation('resetLight');
+
+sunBtn.addEventListener('mousedown', () => {
+  sunDragging = true;
+  sunBtn.style.outline = '2px solid rgba(255,255,255,0.4)';
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!sunDragging) return;
+  const canvas = renderer.domElement;
+  const rect = canvas.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+  const y = -((e.clientY - rect.top) / rect.height - 0.5) * 2;
+  const vec = new THREE.Vector3(x * 10, y * 10, -1).normalize().multiplyScalar(10);
+  dirLight.position.set(vec.x, vec.y, vec.z);
+  dirLight.target.updateMatrixWorld();
+});
+
+window.addEventListener('mouseup', () => {
+  sunDragging = false;
+  sunBtn.style.outline = 'none';
+});
+
+sunReset.addEventListener('click', () => {
+  dirLight.position.set(defaultLightPos.x, defaultLightPos.y, defaultLightPos.z);
+  dirLight.target.updateMatrixWorld();
+});
 

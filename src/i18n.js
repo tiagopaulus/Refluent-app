@@ -62,7 +62,9 @@ export const translations = {
     noObjectsWarning: "Please add at least one object before recording",
     processingVideo: "Processing your video, please wait…",
     exportComplete: "Export complete",
-    exportFailed: "Export failed. Please try again."
+    exportFailed: "Export failed. Please try again.",
+    sunTooltip: "Hold and drag to move the light",
+    resetLight: "Reset"
   },
   kr: {
     addBox: "박스 추가",
@@ -127,7 +129,9 @@ export const translations = {
     noObjectsWarning: "녹화 전에 오브젝트를 추가해 주세요",
     processingVideo: "영상을 처리 중입니다, 잠시만 기다려 주세요…",
     exportComplete: "내보내기 완료",
-    exportFailed: "내보내기에 실패했습니다. 다시 시도해 주세요."
+    exportFailed: "내보내기에 실패했습니다. 다시 시도해 주세요.",
+    sunTooltip: "누른 채로 드래그하여 조명을 이동하세요",
+    resetLight: "초기화"
   }
 };
 
