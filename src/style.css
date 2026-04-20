@@ -669,3 +669,30 @@ button:active {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.node-card.node-inactive { border-color: #2a2a2a; opacity: 0.5; }
+.node-card.node-active { border-color: #444; opacity: 1; box-shadow: 0 0 6px rgba(255,255,255,0.05); }
+.node-card.node-complete { border-color: #2a4a2a; opacity: 0.8; }
+.node-card.node-error { border-color: #4a2a2a; }
+
+.node-status-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #333;
+}
+
+.node-content {
+  font-size: 9px;
+  color: #666;
+  margin-top: 4px;
+  min-height: 16px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}

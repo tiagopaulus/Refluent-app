@@ -1337,6 +1337,7 @@ function activateStep(stepIndex) {
     if (i === stepIndex) card.classList.add('active');
   });
   pipelineState.currentStep = stepIndex;
+  if (typeof syncNodeEditor === 'function') syncNodeEditor();
 }
 
 function resetPipeline() {
@@ -1484,4 +1485,228 @@ if (_step6Card) {
 // Pipeline Reset
 const _pipelineResetBtn = document.getElementById('pipeline-reset-btn');
 if (_pipelineResetBtn) _pipelineResetBtn.addEventListener('click', resetPipeline);
+
+// ---- Node Editor ----
+
+function syncNodeEditor() {
+  const nodeIds = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
+  const nodeContents = [
+    pipelineState.mp4Filename
+      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.mp4Filename}</span>`
+      : '<span style="font-size:9px;color:#555;">Waiting for recording…</span>',
+    pipelineState.referenceFrame !== null
+      ? `<span style="font-size:9px;color:#aaa;">Frame: ${pipelineState.referenceFrame}s</span>`
+      : '',
+    pipelineState.referenceImage
+      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.referenceImage.split(/[\\/]/).pop()}</span>`
+      : '',
+    pipelineState.prompt
+      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.prompt}</span>`
+      : '',
+    pipelineState.aiResultUrl
+      ? '<span style="font-size:9px;color:#aaa;">✓ Render complete</span>'
+      : (pipelineState.currentStep === 4
+          ? '<div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>'
+          : ''),
+    pipelineState.upscaleUrl
+      ? '<span style="font-size:9px;color:#aaa;">✓ 4K ready</span>'
+      : ''
+  ];
+
+  nodeIds.forEach((nodeId, i) => {
+    const node = document.querySelector(`.node-card[data-node="${nodeId}"]`);
+    if (!node) return;
+    const dot = node.querySelector('.node-status-dot');
+    const nodeContent = node.querySelector('.node-content');
+    node.classList.remove('node-inactive', 'node-active', 'node-complete', 'node-error');
+    if (i < pipelineState.currentStep) {
+      node.classList.add('node-complete');
+      if (dot) { dot.style.background = '#3a7a3a'; dot.style.animation = ''; }
+    } else if (i === pipelineState.currentStep) {
+      node.classList.add('node-active');
+      if (dot) { dot.style.background = '#888'; dot.style.animation = 'pulse 2s infinite'; }
+    } else {
+      node.classList.add('node-inactive');
+      if (dot) { dot.style.background = '#333'; dot.style.animation = ''; }
+    }
+    if (nodeContent) {
+      const hasActiveForm = (i === pipelineState.currentStep) && nodeContent.querySelector('input, textarea, button');
+      if (!hasActiveForm) nodeContent.innerHTML = nodeContents[i] || '';
+    }
+  });
+
+  // Update bezier connection colors
+  document.querySelectorAll('#node-bezier path[data-conn]').forEach((path, i) => {
+    if (i < pipelineState.currentStep - 1) {
+      path.setAttribute('stroke', '#555'); path.setAttribute('stroke-width', '0.5'); path.setAttribute('opacity', '0.5');
+    } else if (i === pipelineState.currentStep - 1) {
+      path.setAttribute('stroke', '#888'); path.setAttribute('stroke-width', '0.8'); path.setAttribute('opacity', '0.8');
+    } else {
+      path.setAttribute('stroke', '#333'); path.setAttribute('stroke-width', '0.5'); path.setAttribute('opacity', '0.3');
+    }
+  });
+}
+
+function wireNodeInteractions() {
+  // Node 1 — Select Frame
+  const _nFrame = document.querySelector('.node-card[data-node="frame"]');
+  if (_nFrame) {
+    _nFrame.addEventListener('click', () => {
+      if (pipelineState.currentStep !== 1) return;
+      const nc = _nFrame.querySelector('.node-content');
+      nc.innerHTML = `
+        <div style="padding:2px 0;">
+          <div style="font-size:9px;color:#888;margin-bottom:3px;">Frame (seconds)</div>
+          <input type="number" id="node-frame-input" min="0" step="0.1" value="0"
+            style="width:55px;background:#222;border:1px solid #444;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">
+          <button id="node-confirm-frame"
+            style="margin-left:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px 5px;border-radius:3px;cursor:pointer;">✓</button>
+        </div>`;
+      document.getElementById('node-confirm-frame').addEventListener('click', () => {
+        pipelineState.referenceFrame = document.getElementById('node-frame-input').value;
+        nc.innerHTML = `<span style="font-size:9px;color:#aaa;">Frame: ${pipelineState.referenceFrame}s</span>`;
+        const s2c = document.querySelector('.step-card[data-step="1"] .step-content');
+        if (s2c) s2c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">Frame: ${pipelineState.referenceFrame}s</div>`;
+        activateStep(2);
+      });
+    });
+  }
+
+  // Node 2 — Reference Image
+  const _nRef = document.querySelector('.node-card[data-node="refimage"]');
+  if (_nRef) {
+    _nRef.addEventListener('click', async () => {
+      if (pipelineState.currentStep !== 2) return;
+      const filePath = await window.electronAPI.openFileDialog({
+        filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png'] }]
+      });
+      if (!filePath) return;
+      pipelineState.referenceImage = filePath;
+      const filename = filePath.split(/[\\/]/).pop();
+      const nc = _nRef.querySelector('.node-content');
+      nc.innerHTML = `<span style="font-size:9px;color:#aaa;">${filename}</span>`;
+      const s3c = document.querySelector('.step-card[data-step="2"] .step-content');
+      if (s3c) s3c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${filename}</div>`;
+      activateStep(3);
+    });
+  }
+
+  // Node 3 — Prompt
+  const _nPrompt = document.querySelector('.node-card[data-node="prompt"]');
+  if (_nPrompt) {
+    _nPrompt.addEventListener('click', () => {
+      if (pipelineState.currentStep !== 3) return;
+      const nc = _nPrompt.querySelector('.node-content');
+      nc.innerHTML = `
+        <div style="padding:2px 0;">
+          <textarea id="node-prompt-input" rows="2" placeholder="Describe the scene…"
+            style="width:100%;background:#222;border:1px solid #444;color:#fff;font-size:9px;padding:3px;border-radius:3px;resize:none;box-sizing:border-box;"></textarea>
+          <button id="node-confirm-prompt"
+            style="width:100%;margin-top:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px;border-radius:3px;cursor:pointer;">Generate →</button>
+        </div>`;
+      document.getElementById('node-confirm-prompt').addEventListener('click', () => {
+        pipelineState.prompt = document.getElementById('node-prompt-input').value;
+        if (!pipelineState.prompt.trim()) return;
+        nc.innerHTML = `<span style="font-size:9px;color:#aaa;">${pipelineState.prompt}</span>`;
+        const s4c = document.querySelector('.step-card[data-step="3"] .step-content');
+        if (s4c) s4c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${pipelineState.prompt}</div>`;
+        activateStep(4);
+        triggerAIRender();
+      });
+    });
+  }
+
+  // Node 5 — Upscale
+  const _nUpscale = document.querySelector('.node-card[data-node="upscale"]');
+  if (_nUpscale) {
+    _nUpscale.addEventListener('click', async () => {
+      if (pipelineState.currentStep !== 5) return;
+      const nc = _nUpscale.querySelector('.node-content');
+      nc.innerHTML = `
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:#888;">Upscaling…</div>
+          <div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>
+        </div>`;
+      const s6c = document.querySelector('.step-card[data-step="5"] .step-content');
+      if (s6c) s6c.innerHTML = `
+        <div style="text-align:center;padding:6px;">
+          <div style="font-size:9px;color:#888;">Upscaling...</div>
+          <div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>
+        </div>`;
+      try {
+        const { upscaleProvider } = await import('./providers/upscaleProvider.js');
+        const job = await upscaleProvider.upscale(pipelineState.aiResultUrl, 4);
+        const poll = setInterval(async () => {
+          const status = await upscaleProvider.checkStatus(job.jobId);
+          if (status.status === 'complete') {
+            clearInterval(poll);
+            pipelineState.upscaleUrl = status.outputUrl;
+            nc.innerHTML = '<span style="font-size:9px;color:#aaa;">✓ 4K ready</span>';
+            if (s6c) s6c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">✓ Upscale ready<br><span style="color:#555;font-size:8px;">4K output</span></div>`;
+            activateStep(6);
+          }
+        }, 1000);
+      } catch (err) {
+        nc.innerHTML = '<span style="font-size:9px;color:#c44;">Something went wrong.</span>';
+      }
+    });
+  }
+}
+
+function buildNodeEditor() {
+  const nodePanelEl = document.getElementById('node-panel');
+  if (!nodePanelEl) return;
+  nodePanelEl.innerHTML = `
+    <svg id="node-bezier" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path data-conn="0" d="M 69 8 C 85 8, 15 24, 30 24"  stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
+      <path data-conn="1" d="M 69 24 C 85 24, 15 39, 30 39" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
+      <path data-conn="2" d="M 69 39 C 85 39, 15 54, 30 54" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
+      <path data-conn="3" d="M 69 54 C 85 54, 15 69, 30 69" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
+      <path data-conn="4" d="M 69 69 C 85 69, 15 84, 30 84" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
+    </svg>
+    <div class="node-card node-active"   data-node="mp4"      style="top:5%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-out"></div>
+      <div class="node-header">MP4 Output</div>
+      <div class="node-content"><span style="font-size:9px;color:#555;">Waiting for recording…</span></div>
+    </div>
+    <div class="node-card node-inactive" data-node="frame"    style="top:20%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-in"></div>
+      <div class="node-port-out"></div>
+      <div class="node-header">Select Frame</div>
+      <div class="node-content"></div>
+    </div>
+    <div class="node-card node-inactive" data-node="refimage" style="top:35%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-in"></div>
+      <div class="node-port-out"></div>
+      <div class="node-header">Reference Image</div>
+      <div class="node-content"></div>
+    </div>
+    <div class="node-card node-inactive" data-node="prompt"   style="top:50%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-in"></div>
+      <div class="node-port-out"></div>
+      <div class="node-header">NanaBanana Prompt</div>
+      <div class="node-content"></div>
+    </div>
+    <div class="node-card node-inactive" data-node="render"   style="top:65%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-in"></div>
+      <div class="node-port-out"></div>
+      <div class="node-header">AI Render</div>
+      <div class="node-content"></div>
+    </div>
+    <div class="node-card node-inactive" data-node="upscale"  style="top:80%;left:calc(50% - 90px);">
+      <div class="node-status-dot"></div>
+      <div class="node-port-in"></div>
+      <div class="node-header">Upscale</div>
+      <div class="node-content"></div>
+    </div>`;
+  wireNodeInteractions();
+  syncNodeEditor();
+}
+
+buildNodeEditor();
 
