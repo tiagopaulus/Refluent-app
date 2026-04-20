@@ -194,9 +194,11 @@ try {
 }
 
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const w = container.clientWidth || window.innerWidth;
+  const h = container.clientHeight || window.innerHeight;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
 });
 
 debug('Adding UI event listeners...');
@@ -1265,4 +1267,46 @@ if (_scalePanelEl) {
     }
   });
 }
+
+// ---- Layout Shell ----
+const appContainer = document.getElementById('app-container');
+const simplePanel = document.getElementById('simple-panel');
+const nodePanel = document.getElementById('node-panel');
+const btnSimple = document.getElementById('btn-simple');
+const btnNode = document.getElementById('btn-node');
+
+function setLayout(mode) {
+  const vp = document.getElementById('viewport');
+  if (mode === 'simple') {
+    appContainer.style.flexDirection = 'column';
+    simplePanel.style.display = 'flex';
+    nodePanel.style.display = 'none';
+    if (btnSimple) { btnSimple.style.borderColor = '#fff'; btnSimple.style.opacity = '1'; }
+    if (btnNode)   { btnNode.style.borderColor = '#444';   btnNode.style.opacity = '0.6'; }
+    localStorage.setItem('layout_mode', 'simple');
+  } else {
+    appContainer.style.flexDirection = 'row';
+    simplePanel.style.display = 'none';
+    nodePanel.style.display = 'block';
+    if (btnNode)   { btnNode.style.borderColor = '#fff';   btnNode.style.opacity = '1'; }
+    if (btnSimple) { btnSimple.style.borderColor = '#444'; btnSimple.style.opacity = '0.6'; }
+    localStorage.setItem('layout_mode', 'node');
+  }
+  // Defer resize until after the browser has recalculated flex layout
+  requestAnimationFrame(() => {
+    const w = vp.clientWidth;
+    const h = vp.clientHeight;
+    if (w > 0 && h > 0) {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+  });
+}
+
+if (btnSimple) btnSimple.addEventListener('click', () => setLayout('simple'));
+if (btnNode)   btnNode.addEventListener('click',   () => setLayout('node'));
+
+const savedLayout = localStorage.getItem('layout_mode') || 'simple';
+setLayout(savedLayout);
 

@@ -481,3 +481,171 @@ button:active {
   background: rgba(200, 50, 50, 0.2);
   border-color: rgba(200, 50, 50, 0.5);
 }
+
+/* Layout Shell */
+#app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app-container > #viewport {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Simple Mode Panel */
+#simple-panel {
+  height: 20vh;
+  background: #111;
+  border-top: 1px solid #2a2a2a;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+#simple-panel::-webkit-scrollbar {
+  height: 4px;
+}
+
+#simple-panel::-webkit-scrollbar-track {
+  background: #111;
+}
+
+#simple-panel::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+
+.step-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 108px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #2a2a2a;
+  background: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.step-card:hover {
+  border-color: #555;
+  background: #222;
+}
+
+.step-card.active {
+  border-color: #5a8fff;
+  background: #1a2540;
+}
+
+.step-card.complete {
+  border-color: #3a7a3a;
+  background: #1a2a1a;
+}
+
+.step-icon {
+  font-size: 16px;
+  color: #666;
+  line-height: 1;
+}
+
+.step-card.active .step-icon {
+  color: #5a8fff;
+}
+
+.step-card.complete .step-icon {
+  color: #4caf50;
+}
+
+.step-label {
+  font-size: 11px;
+  color: #ccc;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.step-status {
+  font-size: 9px;
+  color: #555;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.step-connector {
+  font-size: 18px;
+  color: #383838;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+}
+
+/* Node Editor Panel */
+#node-panel {
+  display: none;
+  width: 35%;
+  height: 100%;
+  background: #0f0f0f;
+  border-left: 1px solid #2a2a2a;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.node-card {
+  position: absolute;
+  width: 38%;
+  background: #1a1a1a;
+  border: 1px solid #2e2e2e;
+  border-radius: 6px;
+  padding: 10px 12px 10px 14px;
+}
+
+.node-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ddd;
+  margin-bottom: 3px;
+}
+
+.node-sub {
+  font-size: 10px;
+  color: #555;
+}
+
+.node-port-out {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 50%;
+}
+
+.node-port-in {
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 50%;
+}
