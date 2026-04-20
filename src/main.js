@@ -98,6 +98,15 @@ app.on('window-all-closed', () => {
   }
 });
 
+// IPC Handler: Open File Dialog (images, etc.)
+ipcMain.handle('open-file-dialog', async (_event, options) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: options.filters || []
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
 // IPC Handler: Open Model Dialog
 ipcMain.handle('dialog:openModel', async () => {
   const result = await dialog.showOpenDialog({

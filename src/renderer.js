@@ -32,6 +32,18 @@ const LENS_TEMPLATES = [
 let currentFov = 54;
 let targetFov = 54;
 
+// ---- Pipeline State ----
+const pipelineState = {
+  mp4Path: null,
+  mp4Filename: null,
+  referenceFrame: null,
+  referenceImage: null,
+  prompt: null,
+  aiResultUrl: null,
+  upscaleUrl: null,
+  currentStep: 0
+};
+
 // ---- Scene Setup ----
 const container = document.getElementById('viewport');
 debug('Container element: ' + (container ? 'FOUND' : 'NULL'));
@@ -766,6 +778,11 @@ recordBtn.addEventListener('click', () => {
     
     if (result.success) {
       console.log('Saved to', result.filePath);
+      pipelineState.mp4Path = result.filePath;
+      pipelineState.mp4Filename = result.filePath.split(/[\\/]/).pop();
+      const _s1c = document.querySelector('.step-card[data-step="0"] .step-content');
+      if (_s1c) _s1c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${pipelineState.mp4Filename}</div>`;
+      activateStep(1);
     } else {
       if (result.message !== 'Canceled by user') {
         alert(getTranslation('exportFailed') + result.message);
@@ -1309,4 +1326,162 @@ if (btnNode)   btnNode.addEventListener('click',   () => setLayout('node'));
 
 const savedLayout = localStorage.getItem('layout_mode') || 'simple';
 setLayout(savedLayout);
+
+// ---- Simple Mode Pipeline ----
+
+function activateStep(stepIndex) {
+  const cards = document.querySelectorAll('.step-card');
+  cards.forEach((card, i) => {
+    card.classList.remove('active', 'complete');
+    if (i < stepIndex) card.classList.add('complete');
+    if (i === stepIndex) card.classList.add('active');
+  });
+  pipelineState.currentStep = stepIndex;
+}
+
+function resetPipeline() {
+  pipelineState.mp4Path = null;
+  pipelineState.mp4Filename = null;
+  pipelineState.referenceFrame = null;
+  pipelineState.referenceImage = null;
+  pipelineState.prompt = null;
+  pipelineState.aiResultUrl = null;
+  pipelineState.upscaleUrl = null;
+  pipelineState.currentStep = 0;
+  document.querySelectorAll('.step-content').forEach(el => { el.innerHTML = ''; });
+  const _s1c = document.querySelector('.step-card[data-step="0"] .step-content');
+  if (_s1c) _s1c.innerHTML = '<span style="color:#555;font-size:9px;">recording.mp4</span>';
+  activateStep(0);
+}
+
+async function triggerAIRender() {
+  const step5Content = document.querySelector('.step-card[data-step="4"] .step-content');
+  if (!step5Content) return;
+  step5Content.innerHTML = `
+    <div style="text-align:center;padding:8px;">
+      <div style="font-size:9px;color:#888;">Rendering...</div>
+      <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
+    </div>`;
+  try {
+    const { videoProvider } = await import('./providers/videoProvider.js');
+    const job = await videoProvider.render(pipelineState.mp4Path, pipelineState.prompt, pipelineState.referenceFrame);
+    const poll = setInterval(async () => {
+      const status = await videoProvider.checkStatus(job.jobId);
+      if (status.status === 'complete') {
+        clearInterval(poll);
+        pipelineState.aiResultUrl = status.videoUrl;
+        step5Content.innerHTML = `
+          <div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">
+            ✓ Render complete<br>
+            <span style="color:#555;font-size:8px;">${status.videoUrl}</span>
+          </div>`;
+        activateStep(5);
+      } else if (status.status === 'error') {
+        clearInterval(poll);
+        step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong. Try again.</div>`;
+      }
+    }, 1000);
+  } catch (err) {
+    step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong.</div>`;
+  }
+}
+
+// Step 2 — Select Frame
+const _step2Card = document.querySelector('.step-card[data-step="1"]');
+if (_step2Card) {
+  _step2Card.addEventListener('click', () => {
+    if (pipelineState.currentStep !== 1) return;
+    const step2Content = _step2Card.querySelector('.step-content');
+    step2Content.innerHTML = `
+      <div style="padding:4px;">
+        <div style="font-size:9px;color:#888;margin-bottom:3px;">Frame (seconds)</div>
+        <input type="number" id="frame-input" min="0" step="0.1" value="0"
+          style="width:60px;background:#222;border:1px solid #444;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">
+        <button id="confirm-frame"
+          style="margin-left:4px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px 6px;border-radius:3px;cursor:pointer;">✓</button>
+      </div>`;
+    document.getElementById('confirm-frame').addEventListener('click', () => {
+      pipelineState.referenceFrame = document.getElementById('frame-input').value;
+      step2Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">Frame: ${pipelineState.referenceFrame}s</div>`;
+      activateStep(2);
+    });
+  });
+}
+
+// Step 3 — Add Reference Image
+const _step3Card = document.querySelector('.step-card[data-step="2"]');
+if (_step3Card) {
+  _step3Card.addEventListener('click', async () => {
+    if (pipelineState.currentStep !== 2) return;
+    const filePath = await window.electronAPI.openFileDialog({
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png'] }]
+    });
+    if (!filePath) return;
+    pipelineState.referenceImage = filePath;
+    const filename = filePath.split(/[\\/]/).pop();
+    const step3Content = _step3Card.querySelector('.step-content');
+    step3Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${filename}</div>`;
+    activateStep(3);
+  });
+}
+
+// Step 4 — Prompt
+const _step4Card = document.querySelector('.step-card[data-step="3"]');
+if (_step4Card) {
+  _step4Card.addEventListener('click', () => {
+    if (pipelineState.currentStep !== 3) return;
+    const step4Content = _step4Card.querySelector('.step-content');
+    step4Content.innerHTML = `
+      <div style="padding:4px;">
+        <textarea id="prompt-input" rows="2" placeholder="Describe the scene..."
+          style="width:100%;background:#222;border:1px solid #444;color:#fff;font-size:9px;padding:3px;border-radius:3px;resize:none;box-sizing:border-box;"></textarea>
+        <button id="confirm-prompt"
+          style="width:100%;margin-top:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px;border-radius:3px;cursor:pointer;">Generate →</button>
+      </div>`;
+    document.getElementById('confirm-prompt').addEventListener('click', () => {
+      pipelineState.prompt = document.getElementById('prompt-input').value;
+      if (!pipelineState.prompt.trim()) return;
+      step4Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${pipelineState.prompt}</div>`;
+      activateStep(4);
+      triggerAIRender();
+    });
+  });
+}
+
+// Step 6 — Upscale
+const _step6Card = document.querySelector('.step-card[data-step="5"]');
+if (_step6Card) {
+  _step6Card.addEventListener('click', async () => {
+    if (pipelineState.currentStep !== 5) return;
+    const step6Content = _step6Card.querySelector('.step-content');
+    step6Content.innerHTML = `
+      <div style="text-align:center;padding:8px;">
+        <div style="font-size:9px;color:#888;">Upscaling...</div>
+        <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
+      </div>`;
+    try {
+      const { upscaleProvider } = await import('./providers/upscaleProvider.js');
+      const job = await upscaleProvider.upscale(pipelineState.aiResultUrl, 4);
+      const poll = setInterval(async () => {
+        const status = await upscaleProvider.checkStatus(job.jobId);
+        if (status.status === 'complete') {
+          clearInterval(poll);
+          pipelineState.upscaleUrl = status.outputUrl;
+          step6Content.innerHTML = `
+            <div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">
+              ✓ Upscale ready<br>
+              <span style="color:#555;font-size:8px;">4K output</span>
+            </div>`;
+          activateStep(6);
+        }
+      }, 1000);
+    } catch (err) {
+      step6Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong.</div>`;
+    }
+  });
+}
+
+// Pipeline Reset
+const _pipelineResetBtn = document.getElementById('pipeline-reset-btn');
+if (_pipelineResetBtn) _pipelineResetBtn.addEventListener('click', resetPipeline);
 

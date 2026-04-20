@@ -36,35 +36,36 @@
     </div>
 
     <div id="simple-panel">
-      <div class="step-card active">
+      <div class="step-card active" data-step="0">
         <div class="step-label" data-i18n="step1Label">MP4 Ready</div>
         <div class="step-content"><span style="color:#555;font-size:9px;">recording.mp4</span></div>
       </div>
       <div class="step-connector">›</div>
-      <div class="step-card">
+      <div class="step-card" data-step="1">
         <div class="step-label" data-i18n="step2Label">Select Frame</div>
         <div class="step-content"></div>
       </div>
       <div class="step-connector">›</div>
-      <div class="step-card">
+      <div class="step-card" data-step="2">
         <div class="step-label" data-i18n="step3Label">Add Reference Image</div>
         <div class="step-content"></div>
       </div>
       <div class="step-connector">›</div>
-      <div class="step-card">
+      <div class="step-card" data-step="3">
         <div class="step-label" data-i18n="step4Label">NanoBanana Prompt</div>
         <div class="step-content"></div>
       </div>
       <div class="step-connector">›</div>
-      <div class="step-card">
+      <div class="step-card" data-step="4">
         <div class="step-label" data-i18n="step5Label">AI Render</div>
         <div class="step-content"></div>
       </div>
       <div class="step-connector">›</div>
-      <div class="step-card">
+      <div class="step-card" data-step="5">
         <div class="step-label" data-i18n="step6Label">Upscale</div>
         <div class="step-content"></div>
       </div>
+      <button id="pipeline-reset-btn" style="margin-left:auto;flex-shrink:0;background:none;border:1px solid #2a2a2a;color:#444;font-size:12px;padding:4px 8px;border-radius:4px;cursor:pointer;align-self:center;line-height:1;" title="Reset pipeline">↺</button>
     </div>
 
     <div id="node-panel">

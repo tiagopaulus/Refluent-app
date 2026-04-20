@@ -665,3 +665,7 @@ button:active {
   border: 1px solid #555;
   border-radius: 50%;
 }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
