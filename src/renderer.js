@@ -15,6 +15,23 @@ function debug(msg) {
 
 debug('renderer.js module loading...');
 
+const LENS_TEMPLATES = [
+  { name: 'Leica Summilux 24mm',    fov: 74, near: 0.1, far: 10000, vignette: 0.15 },
+  { name: 'Sigma Art 24mm',         fov: 74, near: 0.1, far: 10000, vignette: 0.10 },
+  { name: 'Leica Summicron 28mm',   fov: 65, near: 0.1, far: 10000, vignette: 0.12 },
+  { name: 'Zeiss Milvus 35mm',      fov: 54, near: 0.1, far: 10000, vignette: 0.10 },
+  { name: 'Cooke S4 32mm',          fov: 58, near: 0.1, far: 10000, vignette: 0.12 },
+  { name: 'Canon EF 50mm f/1.2L',   fov: 40, near: 0.1, far: 10000, vignette: 0.08 },
+  { name: 'Leica Noctilux 50mm',    fov: 40, near: 0.1, far: 10000, vignette: 0.20 },
+  { name: 'Zeiss Supreme 50mm',     fov: 40, near: 0.1, far: 10000, vignette: 0.08 },
+  { name: 'Cooke S4 75mm',          fov: 27, near: 0.1, far: 10000, vignette: 0.10 },
+  { name: 'Zeiss Otus 85mm',        fov: 24, near: 0.1, far: 10000, vignette: 0.10 },
+  { name: 'Leica APO 90mm',         fov: 22, near: 0.1, far: 10000, vignette: 0.12 },
+  { name: 'Canon EF 135mm f/2L',    fov: 15, near: 0.1, far: 10000, vignette: 0.08 },
+];
+let currentFov = 54;
+let targetFov = 54;
+
 // ---- Scene Setup ----
 const container = document.getElementById('viewport');
 debug('Container element: ' + (container ? 'FOUND' : 'NULL'));
@@ -153,6 +170,12 @@ function animate() {
     controls.update();
   }
   renderer.render(scene, camera);
+
+  // FOV animation
+  if (Math.abs(camera.fov - targetFov) > 0.01) {
+    camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.1);
+    camera.updateProjectionMatrix();
+  }
 
   // Sync Gizmo
   gizmoCamera.position.copy(camera.position);
@@ -1085,5 +1108,29 @@ window.addEventListener('mouseup', () => {
 sunReset.addEventListener('click', () => {
   dirLight.position.set(defaultLightPos.x, defaultLightPos.y, defaultLightPos.z);
   dirLight.target.updateMatrixWorld();
+});
+
+// ---- Vignette + Lens HUD ----
+const vignetteEl = document.createElement('div');
+vignetteEl.id = 'vignette-overlay';
+vignetteEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;border-radius:0;background:radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,1) 100%);opacity:0.10;';
+document.getElementById('viewport').appendChild(vignetteEl);
+
+const lensHudEl = document.createElement('div');
+lensHudEl.id = 'lens-hud';
+lensHudEl.style.cssText = 'position:absolute;top:145px;left:16px;font-size:11px;color:rgba(255,255,255,0.5);pointer-events:none;z-index:20;font-family:monospace;';
+lensHudEl.innerText = 'Zeiss Milvus 35mm';
+document.getElementById('viewport').appendChild(lensHudEl);
+
+// ---- Lens Selector Handler ----
+const lensSelect = document.getElementById('lens-select');
+lensSelect.addEventListener('change', () => {
+  const lens = LENS_TEMPLATES[parseInt(lensSelect.value)];
+  targetFov = lens.fov;
+  camera.near = lens.near;
+  camera.far = lens.far;
+  camera.updateProjectionMatrix();
+  document.getElementById('vignette-overlay').style.opacity = lens.vignette;
+  document.getElementById('lens-hud').innerText = lens.name;
 });
 

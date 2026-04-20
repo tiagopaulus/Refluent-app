@@ -23,7 +23,6 @@ function createWindow() {
   });
 
   mainWindow.loadFile('src/index.html');
-  mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

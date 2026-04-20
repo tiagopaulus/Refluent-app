@@ -64,7 +64,8 @@ export const translations = {
     exportComplete: "Export complete",
     exportFailed: "Export failed. Please try again.",
     sunTooltip: "Hold and drag to move the light",
-    resetLight: "Reset"
+    resetLight: "Reset",
+    lens: "Lens"
   },
   kr: {
     addBox: "박스 추가",
@@ -131,7 +132,8 @@ export const translations = {
     exportComplete: "내보내기 완료",
     exportFailed: "내보내기에 실패했습니다. 다시 시도해 주세요.",
     sunTooltip: "누른 채로 드래그하여 조명을 이동하세요",
-    resetLight: "초기화"
+    resetLight: "초기화",
+    lens: "렌즈"
   }
 };
 
