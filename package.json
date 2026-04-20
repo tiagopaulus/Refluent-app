@@ -1,5 +1,5 @@
 {
-  "name": "viewport-tool",
+  "name": "refluent",
   "version": "1.0.0",
   "description": "Desktop 3D Viewport Reference Tool",
   "main": "src/main.js",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.example.viewporttool",
-    "productName": "Viewport Tool",
+    "productName": "Refluent",
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**/*"
     ],

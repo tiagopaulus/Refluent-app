@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getTranslation, setLanguage, getCurrentLang } from './i18n.js';
+import { getTranslation, setLanguage } from './i18n.js';
 
 // Debug: Write to window object
 window.debugLog = [];
@@ -1055,24 +1055,10 @@ function updateUIStrings() {
 // Initial UI pass
 updateUIStrings();
 
-document.getElementById('lang-en').addEventListener('click', () => {
-  setLanguage('en');
-  document.getElementById('lang-en').classList.add('active');
-  document.getElementById('lang-kr').classList.remove('active');
+window.electronAPI.onSetLanguage((lang) => {
+  setLanguage(lang);
   updateUIStrings();
 });
-
-document.getElementById('lang-kr').addEventListener('click', () => {
-  setLanguage('kr');
-  document.getElementById('lang-kr').classList.add('active');
-  document.getElementById('lang-en').classList.remove('active');
-  updateUIStrings();
-});
-
-if (getCurrentLang() === 'kr') {
-  document.getElementById('lang-kr').classList.add('active');
-  document.getElementById('lang-en').classList.remove('active');
-}
 
 // ---- Sun Light Drag Control ----
 const sunBtn = document.getElementById('sun-preview');

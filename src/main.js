@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fluentFfmpeg = require('fluent-ffmpeg');
@@ -10,8 +10,61 @@ if (ffmpegPath.includes('app.asar')) {
 }
 fluentFfmpeg.setFfmpegPath(ffmpegPath);
 
+let mainWindow;
+let currentLang = 'en';
+
+function buildMenu() {
+  const template = [
+    {
+      label: 'Refluent',
+      submenu: [{ role: 'quit' }]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' }
+      ]
+    },
+    {
+      label: 'Language',
+      submenu: [
+        {
+          label: 'English',
+          type: 'radio',
+          checked: currentLang === 'en',
+          click: () => {
+            currentLang = 'en';
+            if (mainWindow) mainWindow.webContents.send('set-language', 'en');
+            buildMenu();
+          }
+        },
+        {
+          label: '한국어',
+          type: 'radio',
+          checked: currentLang === 'kr',
+          click: () => {
+            currentLang = 'kr';
+            if (mainWindow) mainWindow.webContents.send('set-language', 'kr');
+            buildMenu();
+          }
+        }
+      ]
+    },
+    {
+      role: 'window',
+      submenu: [{ role: 'minimize' }, { role: 'close' }]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
+    title: 'Refluent',
     width: 1280,
     height: 720,
     show: false,
@@ -29,6 +82,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  buildMenu();
   createWindow();
 
   app.on('activate', () => {
