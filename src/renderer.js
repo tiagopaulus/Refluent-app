@@ -614,8 +614,6 @@ const recordBtn = document.getElementById('record-btn');
 const stopBtn = document.getElementById('stop-btn');
 const timeDisplay = document.getElementById('recording-time');
 
-let recordingInterval = null;
-
 function resetRecordingTimer() {
   clearInterval(recordingInterval);
   recordingInterval = null;
