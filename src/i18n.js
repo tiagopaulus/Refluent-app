@@ -1,0 +1,149 @@
+export const translations = {
+  en: {
+    addBox: "Add Box",
+    addSphere: "Add Sphere",
+    importModel: "Import Model",
+    clearScene: "Clear Scene",
+    setTarget: "Set Target",
+    clearTarget: "Clear Target",
+    rec: "● REC",
+    stop: "■ Stop",
+    exportMp4: "Export MP4",
+    xScale: "X",
+    yScale: "Y",
+    zScale: "Z",
+    uniform: "Uniform",
+    resetScale: "Reset Scale",
+    orbit: "Orbit",
+    pan: "Pan",
+    zoom: "Zoom",
+    confirmClear: "Are you sure? This will remove all objects",
+    recordingTooShort: "Recording too short",
+    exportFailed: "Failed to save MP4: ",
+    fileSize0: "File size 0",
+    deleteSelected: "Delete selected object",
+    loading: "Loading...",
+    loadingModel: "Loading Model...",
+    errorLoading: "Error loading model",
+    converting: "Converting directly to MP4...",
+    mediaRecNotSupported: "MediaRecorder format not supported",
+    // Position panel
+    position: "Position",
+    scale: "Scale",
+    resetPosition: "Reset Position",
+    cameraTarget: "Camera Target",
+    resetToCenter: "Reset to Center",
+    xPos: "X",
+    yPos: "Y",
+    zPos: "Z",
+    dragOrbit: " + Drag \u2192 ", // RMB + Drag -> Orbit
+    dragPan: " + Drag \u2192 ", // RMB + Drag -> Pan
+    dragZoom: " \u2192 ", // SCROLL -> Zoom
+    lmb: "LMB",
+    rmb: "RMB",
+    scroll: "SCROLL",
+    pushIn: "Push In",
+    pullOut: "Pull Out",
+    dolly: "Dolly",
+    pan: "Pan",
+    tilt: "Tilt",
+    speed: "Speed",
+    duration: "Duration",
+    lockToTarget: "Lock to Target",
+    left: "Left",
+    right: "Right",
+    up: "Up",
+    down: "Down",
+    loop: "Loop",
+    ready: "Ready",
+    playing: "Playing...",
+    looping: "Looping...",
+    stopping: "Stopping...",
+    noObjectsWarning: "Please add at least one object before recording",
+    processingVideo: "Processing your video, please wait…",
+    exportComplete: "Export complete",
+    exportFailed: "Export failed. Please try again."
+  },
+  kr: {
+    addBox: "박스 추가",
+    addSphere: "구체 추가",
+    importModel: "모델 불러오기",
+    clearScene: "장면 초기화",
+    setTarget: "타겟 설정",
+    clearTarget: "타겟 초기화",
+    rec: "● REC",
+    stop: "■ 정지",
+    exportMp4: "MP4 내보내기",
+    xScale: "X",
+    yScale: "Y",
+    zScale: "Z",
+    uniform: "균등 조절",
+    resetScale: "크기 초기화",
+    orbit: "회전",
+    pan: "이동",
+    zoom: "확대/축소",
+    confirmClear: "확실합니까? 모든 오브젝트가 삭제됩니다",
+    recordingTooShort: "녹화 시간이 너무 짧습니다",
+    exportFailed: "MP4 저장 실패: ",
+    fileSize0: "파일 크기가 0입니다",
+    deleteSelected: "선택한 오브젝트 삭제 (Backspace)",
+    loading: "로딩 중...",
+    loadingModel: "모델 불러오는 중...",
+    errorLoading: "모델 불러오기 오류",
+    converting: "MP4로 변환 중...",
+    mediaRecNotSupported: "MediaRecorder 형식을 지원하지 않습니다",
+    // Position panel
+    position: "위치",
+    scale: "크기",
+    resetPosition: "위치 초기화",
+    cameraTarget: "카메라 타겟",
+    resetToCenter: "중앙으로 초기화",
+    xPos: "X",
+    yPos: "Y",
+    zPos: "Z",
+    dragOrbit: " + 드래그 \u2192 ", 
+    dragPan: " + 드래그 \u2192 ",
+    dragZoom: " \u2192 ",
+    lmb: "좌클릭",
+    rmb: "우클릭",
+    scroll: "스크롤",
+    pushIn: "전진",
+    pullOut: "후진",
+    dolly: "돌리",
+    pan: "패닝",
+    tilt: "틸트",
+    speed: "속도",
+    duration: "지속 시간",
+    lockToTarget: "타겟 고정",
+    left: "왼쪽",
+    right: "오른쪽",
+    up: "위",
+    down: "아래",
+    loop: "반복",
+    ready: "준비",
+    playing: "재생 중...",
+    looping: "반복 중...",
+    stopping: "중지 중...",
+    noObjectsWarning: "녹화 전에 오브젝트를 추가해 주세요",
+    processingVideo: "영상을 처리 중입니다, 잠시만 기다려 주세요…",
+    exportComplete: "내보내기 완료",
+    exportFailed: "내보내기에 실패했습니다. 다시 시도해 주세요."
+  }
+};
+
+let currentLang = localStorage.getItem('viewportLanguage') || 'en';
+
+export function getTranslation(key) {
+  return translations[currentLang][key] || key;
+}
+
+export function getCurrentLang() {
+  return currentLang;
+}
+
+export function setLanguage(lang) {
+  if (translations[lang]) {
+    currentLang = lang;
+    localStorage.setItem('viewportLanguage', lang);
+  }
+}

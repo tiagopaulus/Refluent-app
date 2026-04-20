@@ -1,0 +1,149 @@
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const fluentFfmpeg = require('fluent-ffmpeg');
+
+// Get the correct path for ffmpeg-static across development and production
+let ffmpegPath = require('ffmpeg-static');
+if (ffmpegPath.includes('app.asar')) {
+  ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked');
+}
+fluentFfmpeg.setFfmpegPath(ffmpegPath);
+
+function createWindow() {
+  const mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: false
+    }
+  });
+
+  mainWindow.loadFile('src/index.html');
+  mainWindow.webContents.openDevTools();
+}
+
+app.whenReady().then(() => {
+  createWindow();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+// IPC Handler: Open Model Dialog
+ipcMain.handle('dialog:openModel', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [
+      { name: '3D Models', extensions: ['obj', 'gltf', 'glb'] }
+    ]
+  });
+  
+  if (result.canceled) return null;
+  return result.filePaths[0]; // Returns array of paths, we want the first
+});
+
+// IPC Handler: Convert WebM to MP4
+ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration }) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const tempBasePath = path.join(app.getPath('temp'), `viewport-recording-${Date.now()}`);
+      const tempWebmPath = tempBasePath + '.webm';
+      const tempMp4Path = tempBasePath + '.mp4';
+      
+      const buffer = Buffer.from(arrayBuffer);
+      
+      fs.writeFile(tempWebmPath, buffer, (err) => {
+        if (err) {
+          console.error("Failed to write buffer", err);
+          return resolve({ success: false, message: 'Failed to write chunks to disk' });
+        }
+        
+        try {
+          const webmStats = fs.statSync(tempWebmPath);
+          console.log(`[Main] WebM temp file written successfully. Size: ${webmStats.size} bytes`);
+          if (webmStats.size === 0) {
+            return resolve({ success: false, message: 'Recording may have been too short (0 bytes written).' });
+          }
+        } catch (e) {
+          return resolve({ success: false, message: 'Failed to verify temp webm file.' });
+        }
+
+        console.log('[Main] FFmpeg conversion started');
+        event.sender.send('export-progress', 0);
+        fluentFfmpeg(tempWebmPath)
+          .outputOptions([
+            '-y',
+            '-vcodec', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-crf', '18',
+            '-preset', 'slow',
+            '-movflags', '+faststart',
+            '-vf', 'scale=1920:-2'
+          ])
+          .save(tempMp4Path)
+          .on('stderr', (stderrLine) => {
+            console.log('[FFmpeg stderr] ' + stderrLine);
+            const match = stderrLine.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+            if (match) {
+              const hours = parseInt(match[1]);
+              const minutes = parseInt(match[2]);
+              const seconds = parseFloat(match[3]);
+              const current = hours * 3600 + minutes * 60 + seconds;
+              const percent = Math.min((current / duration) * 100, 100);
+              event.sender.send('export-progress', percent);
+            }
+          })
+          .on('end', async () => {
+            console.log('[Main] FFmpeg conversion finished');
+            event.sender.send('export-progress', 100);
+            if (fs.existsSync(tempWebmPath)) fs.unlinkSync(tempWebmPath);
+            
+            try {
+               const stats = fs.statSync(tempMp4Path);
+               if (stats.size === 0) {
+                 if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
+                 return resolve({ success: false, message: 'FFmpeg generated a 0-byte unplayable file. Conversion failed.' });
+               }
+            } catch (e) {
+               return resolve({ success: false, message: 'Failed to find exported MP4.' });
+            }
+
+            const saveResult = await dialog.showSaveDialog({
+              title: 'Save MP4 Recording',
+              defaultPath: path.join(app.getPath('documents'), 'viewport-recording.mp4'),
+              filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
+            });
+
+            if (saveResult.canceled) {
+              if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
+              return resolve({ success: false, message: 'Canceled by user' });
+            }
+
+            const outputMp4Path = saveResult.filePath;
+            fs.renameSync(tempMp4Path, outputMp4Path);
+            resolve({ success: true, filePath: outputMp4Path });
+          })
+          .on('error', (err) => {
+            if (fs.existsSync(tempWebmPath)) fs.unlinkSync(tempWebmPath);
+            if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
+            resolve({ success: false, message: err.message });
+          });
+      });
+    } catch (error) {
+      return resolve({ success: false, message: error.message });
+    }
+  });
+});

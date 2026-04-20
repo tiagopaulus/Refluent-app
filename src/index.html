@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Desktop 3D Viewport Reference Tool</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="viewport">
+    <p style="color: white; padding: 20px; font-family: Arial; font-size: 18px;">Loading 3D Viewport... If this message persists, there's an issue with the 3D renderer.</p>
+  </div>
+
+  <div class="top-toolbar">
+    <div class="top-toolbar-section">
+      <div class="radio-group" id="cam-move-radios">
+        <input type="radio" id="cam-push-in" name="camType" value="pushIn" checked>
+        <label for="cam-push-in" data-i18n="pushIn">Push In</label>
+        
+        <input type="radio" id="cam-pull-out" name="camType" value="pullOut">
+        <label for="cam-pull-out" data-i18n="pullOut">Pull Out</label>
+        
+        <input type="radio" id="cam-dolly" name="camType" value="dolly">
+        <label for="cam-dolly" data-i18n="dolly">Dolly</label>
+        
+        <input type="radio" id="cam-pan" name="camType" value="pan">
+        <label for="cam-pan" data-i18n="pan">Pan</label>
+        
+        <input type="radio" id="cam-tilt" name="camType" value="tilt">
+        <label for="cam-tilt" data-i18n="tilt">Tilt</label>
+      </div>
+    </div>
+    
+    <div class="top-toolbar-section" id="cam-dir-section" style="display: none;">
+      <div class="radio-group" id="cam-dir-radios">
+        <input type="radio" id="cam-dir-btn1" name="camDir" value="1" checked>
+        <label for="cam-dir-btn1" id="lbl-dir-1" data-i18n="left">Left</label>
+        
+        <input type="radio" id="cam-dir-btn2" name="camDir" value="-1">
+        <label for="cam-dir-btn2" id="lbl-dir-2" data-i18n="right">Right</label>
+      </div>
+    </div>
+    
+    <div class="top-toolbar-section">
+      <div class="cam-slider-group">
+        <label data-i18n="speed">Speed</label>
+        <input type="range" id="cam-speed" min="0.1" max="5.0" step="0.1" value="1.0">
+        <span class="cam-slider-val" id="cam-speed-val">1.0</span>
+      </div>
+      <div class="cam-slider-group" style="margin-left: 10px;">
+        <label data-i18n="duration">Duration</label>
+        <input type="range" id="cam-duration" min="1" max="30" step="1" value="5">
+        <span class="cam-slider-val" id="cam-duration-val">5</span>
+      </div>
+      <label style="margin-left: 10px; cursor: pointer;">
+        <input type="checkbox" id="cam-lock-target"> <span data-i18n="lockToTarget">Lock to Target</span>
+      </label>
+    </div>
+    
+    <div class="top-toolbar-section" style="border-right: none;">
+      <button id="cam-play-btn" class="play-btn">▶</button>
+      <button id="cam-loop-btn" class="loop-btn" data-i18n="loop" style="margin-left: 5px;">Loop</button>
+      <button id="cam-stop-btn" class="stop-btn" data-i18n="stop" style="margin-left: 5px;">Stop</button>
+      <span id="cam-status" data-i18n="ready">Ready</span>
+    </div>
+  </div>
+
+  <div id="language-switch">
+    <button id="lang-en" class="lang-btn active">EN</button>
+    <button id="lang-kr" class="lang-btn">한국어</button>
+  </div>
+  
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <button id="add-box-btn" data-i18n="addBox">Add Box</button>
+      <button id="add-sphere-btn" data-i18n="addSphere">Add Sphere</button>
+      <button id="import-model-btn" data-i18n="importModel">Import Model</button>
+      <button id="clear-scene-btn" data-i18n="clearScene">Clear Scene</button>
+      <button id="set-target-btn" data-i18n="setTarget">Set Target</button>
+      <button id="clear-target-btn" class="hidden" data-i18n="clearTarget">Clear Target</button>
+    </div>
+    <div class="toolbar-right">
+      <div id="recording-time" class="hidden">00:00</div>
+      <button id="record-btn" class="rec-btn" data-i18n="rec">● REC</button>
+      <button id="stop-btn" class="hidden" data-i18n="stop">■ Stop</button>
+    </div>
+  </div>
+
+  <div id="loading-overlay" class="hidden">
+    <div class="spinner"></div>
+    <p id="loading-text" data-i18n="loading">Loading...</p>
+  </div>
+
+  <div id="export-overlay" class="hidden">
+    <div class="export-progress-container">
+      <div class="export-progress-bar">
+        <div class="export-progress-fill" id="export-progress-fill"></div>
+      </div>
+      <div class="export-progress-text" id="export-progress-text">0%</div>
+      <p id="export-message" data-i18n="processingVideo">Processing your video, please wait…</p>
+    </div>
+  </div>
+
+  <div id="nav-hint">
+    <button id="close-hint-btn">&times;</button>
+    <div class="hint-row"><span class="hint-icon" data-i18n="lmb">LMB</span><span data-i18n="dragOrbit"> + Drag &rarr; </span><span data-i18n="orbit">Orbit</span></div>
+    <div class="hint-row"><span class="hint-icon" data-i18n="rmb">RMB</span><span data-i18n="dragPan"> + Drag &rarr; </span><span data-i18n="pan">Pan</span></div>
+    <div class="hint-row"><span class="hint-icon" data-i18n="scroll">SCROLL</span><span data-i18n="dragZoom"> &rarr; </span><span data-i18n="zoom">Zoom</span></div>
+  </div>
+
+  <button id="delete-btn" class="hidden" data-i18n="deleteSelected">Delete Selected</button>
+
+  <div id="panels-wrapper">
+    <div id="target-panel" class="hidden transform-panel">
+      <div id="target-panel-title" style="font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #444; padding-bottom: 8px;" data-i18n="cameraTarget">Camera Target</div>
+      
+      <div class="panel-section-title" data-i18n="position" style="margin-top: 8px; margin-bottom: 8px; font-size: 13px; color: #ccc;">Position</div>
+      <div class="scale-row">
+        <label data-i18n="xPos">X</label>
+        <input type="range" id="target-pos-x" min="-20" max="20" step="0.1" value="0">
+        <span id="target-pos-x-val" class="scale-val">0.0</span>
+      </div>
+      <div class="scale-row">
+        <label data-i18n="yPos">Y</label>
+        <input type="range" id="target-pos-y" min="-20" max="20" step="0.1" value="0">
+        <span id="target-pos-y-val" class="scale-val">0.0</span>
+      </div>
+      <div class="scale-row">
+        <label data-i18n="zPos">Z</label>
+        <input type="range" id="target-pos-z" min="-20" max="20" step="0.1" value="0">
+        <span id="target-pos-z-val" class="scale-val">0.0</span>
+      </div>
+      <div class="scale-actions" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+        <button id="target-reset-btn" data-i18n="resetToCenter" style="width: 100%; background: #444; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Reset to Center</button>
+        <button id="target-clear-btn" data-i18n="clearTarget" style="width: 100%; background: #444; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Clear Target</button>
+      </div>
+    </div>
+
+    <div id="scale-panel" class="hidden transform-panel">
+    <div id="panel-title" style="font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #444; padding-bottom: 8px;">Box</div>
+    
+    <div class="panel-section-title" data-i18n="position" style="margin-top: 8px; margin-bottom: 8px; font-size: 13px; color: #ccc;">Position</div>
+    <div class="scale-row">
+      <label data-i18n="xPos">X</label>
+      <input type="range" id="pos-x" min="-20" max="20" step="0.1" value="0">
+      <span id="pos-x-val" class="scale-val">0.0</span>
+    </div>
+    <div class="scale-row">
+      <label data-i18n="yPos">Y</label>
+      <input type="range" id="pos-y" min="-20" max="20" step="0.1" value="0">
+      <span id="pos-y-val" class="scale-val">0.0</span>
+    </div>
+    <div class="scale-row">
+      <label data-i18n="zPos">Z</label>
+      <input type="range" id="pos-z" min="-20" max="20" step="0.1" value="0">
+      <span id="pos-z-val" class="scale-val">0.0</span>
+    </div>
+    <div class="scale-actions" style="margin-bottom: 12px; border-bottom: 1px solid #444; padding-bottom: 12px;">
+      <button id="pos-reset-btn" data-i18n="resetPosition" style="width: 100%;">Reset Position</button>
+    </div>
+
+    <div class="panel-section-title" data-i18n="scale" style="margin-top: 12px; margin-bottom: 8px; font-size: 13px; color: #ccc;">Scale</div>
+    <div class="scale-row">
+      <label data-i18n="xScale">X</label>
+      <input type="range" id="scale-x" min="0.1" max="10" step="0.1" value="1">
+      <span id="scale-x-val" class="scale-val">1.0</span>
+    </div>
+    <div class="scale-row">
+      <label data-i18n="yScale">Y</label>
+      <input type="range" id="scale-y" min="0.1" max="10" step="0.1" value="1">
+      <span id="scale-y-val" class="scale-val">1.0</span>
+    </div>
+    <div class="scale-row">
+      <label data-i18n="zScale">Z</label>
+      <input type="range" id="scale-z" min="0.1" max="10" step="0.1" value="1">
+      <span id="scale-z-val" class="scale-val">1.0</span>
+    </div>
+    <div class="scale-actions" style="flex-wrap: wrap;">
+      <label class="uniform-label"><input type="checkbox" id="scale-uniform" checked> <span data-i18n="uniform">Uniform</span></label>
+      <button id="scale-reset-btn" data-i18n="resetScale">Reset Scale</button>
+    </div>
+  </div>
+
+  <!-- Note: renderer.js handles Three.js imports using ES Modules via an import map or bundler. 
+       Since we don't have a bundler, we'll use ES module imports locally mapped to node_modules in renderer.js -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../node_modules/three/build/three.module.js",
+        "three/addons/": "../node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>
