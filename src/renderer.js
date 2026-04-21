@@ -2605,6 +2605,8 @@ function activateStep(stepIndex) {
   });
   pipelineState.currentStep = stepIndex;
   if (typeof syncNodeEditor === 'function') syncNodeEditor();
+  if (typeof updateStepMediaPreviews === 'function') updateStepMediaPreviews();
+  if (typeof drawSimpleConnections === 'function') drawSimpleConnections();
 }
 
 function resetPipeline() {
@@ -2653,6 +2655,330 @@ async function triggerAIRender() {
     step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong.</div>`;
   }
 }
+
+// ---- Mission K: Simple Mode rebuild ----
+const simpleModeState = {
+  offsetX: 0, offsetY: 0,
+  scale: 1,
+  minScale: 0.3, maxScale: 2.5,
+  isDragging: false,
+  lastMouseX: 0, lastMouseY: 0
+};
+
+const stepWorldPositions = {
+  mp4:      { x: 20,  y: 20 },
+  frame:    { x: 180, y: 20 },
+  refimage: { x: 340, y: 20 },
+  prompt:   { x: 500, y: 20 },
+  render:   { x: 660, y: 20 },
+  upscale:  { x: 820, y: 20 }
+};
+
+const stepDefs = [
+  { id: 'mp4',      idx: 0, i18nKey: 'step1Label', fallback: 'MP4 Ready',         skippable: false },
+  { id: 'frame',    idx: 1, i18nKey: 'step2Label', fallback: 'Select Frame',      skippable: true  },
+  { id: 'refimage', idx: 2, i18nKey: 'step3Label', fallback: 'Reference Image',   skippable: true  },
+  { id: 'prompt',   idx: 3, i18nKey: 'step4Label', fallback: 'Nanobanana Prompt', skippable: true  },
+  { id: 'render',   idx: 4, i18nKey: 'step5Label', fallback: 'AI Render',         skippable: false },
+  { id: 'upscale',  idx: 5, i18nKey: 'step6Label', fallback: 'Upscale',           skippable: true  }
+];
+
+function simpleWorldToScreen(wx, wy) {
+  return {
+    x: wx * simpleModeState.scale + simpleModeState.offsetX,
+    y: wy * simpleModeState.scale + simpleModeState.offsetY
+  };
+}
+
+function drawSimpleGrid() {
+  // Mission K fix - grid removed, plain dark background only
+  const canvas = document.getElementById('simple-grid-canvas');
+  if (canvas) canvas.style.display = 'none';
+}
+
+function updateStepPositions() {
+  const s = simpleModeState.scale;
+  const BASE = 140;
+  const scaledSize = BASE * s;
+  Object.keys(stepWorldPositions).forEach(stepId => {
+    const card = document.querySelector(`.step-card[data-step-key="${stepId}"]`);
+    if (!card) return;
+    const screen = simpleWorldToScreen(stepWorldPositions[stepId].x, stepWorldPositions[stepId].y);
+    card.style.left = screen.x + 'px';
+    card.style.top = screen.y + 'px';
+    card.style.width = scaledSize + 'px';
+    card.style.height = scaledSize + 'px';
+    card.style.fontSize = Math.max(8, 11 * s) + 'px';
+    card.style.borderRadius = Math.max(3, 8 * s) + 'px';
+
+    const header = card.querySelector('.step-header');
+    if (header) {
+      header.style.padding = `${Math.max(3, 6 * s)}px ${Math.max(4, 8 * s)}px`;
+      header.style.fontSize = Math.max(8, 11 * s) + 'px';
+    }
+  });
+  drawSimpleConnections();
+  drawSimpleGrid();
+}
+
+function makeStepDraggable(cardEl) {
+  const stepId = cardEl.dataset.stepKey;
+  if (!stepId || !stepWorldPositions[stepId]) return;
+  let isDragging = false;
+  let startMouseX, startMouseY, startWorldX, startWorldY;
+  const header = cardEl.querySelector('.step-header');
+  if (!header) return;
+
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.classList && e.target.classList.contains('step-skip-btn')) return;
+    e.stopPropagation();
+    isDragging = true;
+    startMouseX = e.clientX;
+    startMouseY = e.clientY;
+    startWorldX = stepWorldPositions[stepId].x;
+    startWorldY = stepWorldPositions[stepId].y;
+    cardEl.style.zIndex = '50';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const s = simpleModeState.scale;
+    stepWorldPositions[stepId].x = startWorldX + (e.clientX - startMouseX) / s;
+    stepWorldPositions[stepId].y = startWorldY + (e.clientY - startMouseY) / s;
+    const screen = simpleWorldToScreen(stepWorldPositions[stepId].x, stepWorldPositions[stepId].y);
+    cardEl.style.left = screen.x + 'px';
+    cardEl.style.top = screen.y + 'px';
+    drawSimpleConnections();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isDragging) { isDragging = false; cardEl.style.zIndex = '10'; }
+  });
+}
+
+function drawSimpleConnections() {
+  const panel = document.getElementById('simple-panel');
+  if (!panel) return;
+  let svg = document.getElementById('simple-connections-svg');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'simple-connections-svg';
+    svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+    panel.appendChild(svg);
+  }
+  // Reset with arrowhead marker defs
+  svg.innerHTML = `
+    <defs>
+      <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#555" opacity="0.8"/>
+      </marker>
+      <marker id="arrowhead-active" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#888" opacity="1"/>
+      </marker>
+    </defs>`;
+  const panelRect = panel.getBoundingClientRect();
+  const stepOrder = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
+
+  const activeIds = stepOrder.filter(id => {
+    const c = document.querySelector(`.step-card[data-step-key="${id}"]`);
+    return c && !c.classList.contains('skipped');
+  });
+
+  for (let i = 0; i < activeIds.length - 1; i++) {
+    const fromCard = document.querySelector(`.step-card[data-step-key="${activeIds[i]}"]`);
+    const toCard = document.querySelector(`.step-card[data-step-key="${activeIds[i + 1]}"]`);
+    if (!fromCard || !toCard) continue;
+    const fr = fromCard.getBoundingClientRect();
+    const tr = toCard.getBoundingClientRect();
+    const x1 = fr.right - panelRect.left;
+    const y1 = fr.top - panelRect.top + fr.height / 2;
+    const x2 = tr.left - panelRect.left;
+    const y2 = tr.top - panelRect.top + tr.height / 2;
+    const cp = Math.abs(x2 - x1) * 0.2;
+    const fromIdx = stepOrder.indexOf(activeIds[i]);
+    const isActive = fromIdx < pipelineState.currentStep;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${x1} ${y1} C ${x1+cp} ${y1}, ${x2-cp} ${y2}, ${x2} ${y2}`);
+    path.setAttribute('stroke', isActive ? '#667' : '#2a2a2a');
+    path.setAttribute('stroke-width', isActive ? '1.5' : '1');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('opacity', isActive ? '0.9' : '0.4');
+    path.setAttribute('marker-end', isActive ? 'url(#arrowhead-active)' : 'url(#arrowhead)');
+    svg.appendChild(path);
+  }
+}
+
+function toggleSkipStep(stepId) {
+  const card = document.querySelector(`.step-card[data-step-key="${stepId}"]`);
+  if (!card) return;
+  const isSkipped = card.classList.toggle('skipped');
+  const btn = card.querySelector('.step-skip-btn');
+  if (btn) btn.textContent = isSkipped ? 'Include' : 'Skip';
+  console.log(`[Pipeline] Step ${stepId} ${isSkipped ? 'skipped' : 'restored'}`);
+  drawSimpleConnections();
+  updatePipelineFromSkips();
+}
+
+function updatePipelineFromSkips() {
+  const allSteps = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
+  const activeSteps = allSteps.filter(id => {
+    const card = document.querySelector(`.step-card[data-step-key="${id}"]`);
+    return card && !card.classList.contains('skipped');
+  });
+  console.log('[Pipeline] active steps:', activeSteps);
+}
+
+function updateStepMediaPreviews() {
+  if (pipelineState.mp4Path) {
+    const content = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
+    if (content && !content.querySelector('input, textarea, button')) {
+      const safe = `file:///${pipelineState.mp4Path.replace(/\\/g, '/')}`;
+      content.innerHTML = `<video src="${safe}" style="width:100%;height:100%;object-fit:cover;" preload="metadata" muted playsinline></video>`;
+      const v = content.querySelector('video');
+      if (v) {
+        v.addEventListener('loadedmetadata', () => { try { v.currentTime = 0.1; } catch (e) {} });
+        v.addEventListener('mouseenter', () => { v.play().catch(() => {}); });
+        v.addEventListener('mouseleave', () => { v.pause(); try { v.currentTime = 0.1; } catch (e) {} });
+      }
+    }
+  }
+  if (pipelineState.referenceImage) {
+    const content = document.querySelector('.step-card[data-step-key="refimage"] .step-content');
+    if (content && !content.querySelector('input, textarea, button')) {
+      const safe = `file:///${pipelineState.referenceImage.replace(/\\/g, '/')}`;
+      content.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;">`;
+    }
+  }
+  if (pipelineState.aiResultUrl && !pipelineState.aiResultUrl.startsWith('mock://')) {
+    const content = document.querySelector('.step-card[data-step-key="render"] .step-content');
+    if (content && !content.querySelector('input, textarea, button')) {
+      content.innerHTML = `<video src="${pipelineState.aiResultUrl}" style="width:100%;height:100%;object-fit:cover;" autoplay loop muted></video>`;
+    }
+  }
+}
+
+function rebuildSimplePanel() {
+  const simplePanel = document.getElementById('simple-panel');
+  if (!simplePanel) return;
+  simplePanel.innerHTML = '';
+  simplePanel.style.position = 'relative';
+
+  // Grid canvas behind cards
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.id = 'simple-grid-canvas';
+  gridCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  simplePanel.appendChild(gridCanvas);
+
+  // Build cards
+  stepDefs.forEach(step => {
+    const card = document.createElement('div');
+    card.className = 'step-card';
+    card.dataset.step = String(step.idx);
+    card.dataset.stepKey = step.id;
+    card.innerHTML = `
+      <div class="step-header">
+        <span class="step-name" data-i18n="${step.i18nKey}">${getTranslation(step.i18nKey) || step.fallback}</span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span class="step-status-dot"></span>
+          ${step.skippable ? '<button class="step-skip-btn" title="Toggle skip">Skip</button>' : ''}
+        </div>
+      </div>
+      <div class="step-body"><div class="step-content">${step.id === 'mp4' ? '<span style="color:#555;font-size:9px;">recording.mp4</span>' : ''}</div></div>`;
+    simplePanel.appendChild(card);
+    makeStepDraggable(card);
+    if (step.skippable) {
+      const skipBtn = card.querySelector('.step-skip-btn');
+      if (skipBtn) skipBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSkipStep(step.id);
+      });
+    }
+  });
+
+  // Floating zoom controls + reset (reset preserves legacy id)
+  const simpleControls = document.createElement('div');
+  simpleControls.style.cssText = 'position:absolute;bottom:12px;right:12px;display:flex;gap:4px;z-index:200;';
+  simpleControls.innerHTML = `
+    <button class="node-ctrl-btn" id="simple-zoom-in" title="Zoom In">+</button>
+    <button class="node-ctrl-btn" id="simple-zoom-out" title="Zoom Out">&#8722;</button>
+    <button class="node-ctrl-btn" id="simple-center" title="Center All">&#8857;</button>
+    <button class="node-ctrl-btn" id="pipeline-reset-btn" title="Reset pipeline">&#8634;</button>`;
+  simplePanel.appendChild(simpleControls);
+
+  document.getElementById('simple-zoom-in').addEventListener('click', () => {
+    const rect = simplePanel.getBoundingClientRect();
+    const cx = rect.width / 2, cy = rect.height / 2;
+    const factor = 1.2;
+    const newScale = Math.min(simpleModeState.maxScale, simpleModeState.scale * factor);
+    const realFactor = newScale / simpleModeState.scale;
+    simpleModeState.offsetX = cx - realFactor * (cx - simpleModeState.offsetX);
+    simpleModeState.offsetY = cy - realFactor * (cy - simpleModeState.offsetY);
+    simpleModeState.scale = newScale;
+    updateStepPositions();
+  });
+  document.getElementById('simple-zoom-out').addEventListener('click', () => {
+    const rect = simplePanel.getBoundingClientRect();
+    const cx = rect.width / 2, cy = rect.height / 2;
+    const factor = 0.8;
+    const newScale = Math.max(simpleModeState.minScale, simpleModeState.scale * factor);
+    const realFactor = newScale / simpleModeState.scale;
+    simpleModeState.offsetX = cx - realFactor * (cx - simpleModeState.offsetX);
+    simpleModeState.offsetY = cy - realFactor * (cy - simpleModeState.offsetY);
+    simpleModeState.scale = newScale;
+    updateStepPositions();
+  });
+  document.getElementById('simple-center').addEventListener('click', () => {
+    simpleModeState.offsetX = 0;
+    simpleModeState.offsetY = 0;
+    simpleModeState.scale = 1;
+    updateStepPositions();
+  });
+
+  // Pan from empty area
+  simplePanel.addEventListener('mousedown', (e) => {
+    if (e.target !== simplePanel && e.target !== gridCanvas) return;
+    simpleModeState.isDragging = true;
+    simpleModeState.lastMouseX = e.clientX;
+    simpleModeState.lastMouseY = e.clientY;
+    simplePanel.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!simpleModeState.isDragging) return;
+    simpleModeState.offsetX += e.clientX - simpleModeState.lastMouseX;
+    simpleModeState.offsetY += e.clientY - simpleModeState.lastMouseY;
+    simpleModeState.lastMouseX = e.clientX;
+    simpleModeState.lastMouseY = e.clientY;
+    updateStepPositions();
+  });
+  window.addEventListener('mouseup', () => {
+    if (simpleModeState.isDragging) {
+      simpleModeState.isDragging = false;
+      simplePanel.style.cursor = 'default';
+    }
+  });
+
+  // Cursor-anchored wheel zoom
+  simplePanel.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.92 : 1.08;
+    const newScale = Math.min(simpleModeState.maxScale,
+      Math.max(simpleModeState.minScale, simpleModeState.scale * factor));
+    const rect = simplePanel.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const worldX = (mouseX - simpleModeState.offsetX) / simpleModeState.scale;
+    const worldY = (mouseY - simpleModeState.offsetY) / simpleModeState.scale;
+    simpleModeState.scale = newScale;
+    simpleModeState.offsetX = mouseX - worldX * newScale;
+    simpleModeState.offsetY = mouseY - worldY * newScale;
+    updateStepPositions();
+  }, { passive: false });
+
+  updateStepPositions();
+  drawSimpleConnections();
+}
+
+rebuildSimplePanel();
 
 // Step 2 — Select Frame
 const _step2Card = document.querySelector('.step-card[data-step="1"]');

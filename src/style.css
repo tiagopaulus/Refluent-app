@@ -500,14 +500,10 @@ button:active {
 /* Simple Mode Panel */
 #simple-panel {
   height: 20vh;
-  background: #111;
+  background: #0f0f0f;
   border-top: 1px solid #2a2a2a;
-  overflow-x: auto;
-  overflow-y: hidden;
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  gap: 0;
+  overflow: hidden;
+  position: relative;
   flex-shrink: 0;
 }
 
@@ -525,22 +521,75 @@ button:active {
 }
 
 .step-card {
+  position: absolute;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  min-width: 100px;
-  width: 120px;
-  height: 120px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  background: #141414;
   border: 1px solid #2a2a2a;
-  background: #161616;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  gap: 0;
-  flex-shrink: 0;
+  border-radius: 8px;
+  cursor: move;
+  user-select: none;
+  overflow: hidden;
+  transition: border-color 0.2s, opacity 0.2s;
   box-sizing: border-box;
+  z-index: 10;
+}
+.step-card:hover { border-color: #3a3a3a; }
+.step-card.skipped { opacity: 0.4; border-style: dashed; }
+.step-card .step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #222;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+}
+.step-card .step-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.step-card .step-skip-btn {
+  font-size: 11px;
+  color: #666;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 1px 6px;
+  line-height: 1.4;
+  transition: all 0.15s;
+}
+.step-card .step-skip-btn:hover {
+  color: #fff;
+  border-color: #666;
+  background: #2a2a2a;
+}
+.step-card.skipped .step-skip-btn {
+  color: #4a9a4a;
+  border-color: #2a4a2a;
+  background: #0f1f0f;
+}
+.step-card .step-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #333;
+  flex-shrink: 0;
+}
+.step-card .step-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 0;
+  background: #0d0d0d;
 }
 
 .step-card:hover {
