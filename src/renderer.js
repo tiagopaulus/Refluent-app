@@ -32,6 +32,10 @@ const LENS_TEMPLATES = [
 let currentFov = 54;
 let targetFov = 54;
 
+// Mission E - popup sentinel so animate() can safely skip the position update
+// before selectedObject and objectPopup are initialized later in the file
+let _popupReady = false;
+
 // ---- Pipeline State ----
 const pipelineState = {
   mp4Path: null,
@@ -307,7 +311,13 @@ targetClearBtn.addEventListener('click', clearTargetAction);
 
 let selectedObject = null;
 
+// Mission E - object naming counters
+let boxCount = 0;
+let sphereCount = 0;
+
 const scalePanel = document.getElementById('scale-panel');
+// Mission E - permanently hide the legacy center-screen panel; popup replaces it
+if (scalePanel) scalePanel.style.display = 'none';
 const posX = document.getElementById('pos-x');
 const posY = document.getElementById('pos-y');
 const posZ = document.getElementById('pos-z');
@@ -396,6 +406,184 @@ scaleResetBtn.addEventListener('click', () => {
   }
 });
 
+// ---- Mission E: Floating object popup ----
+const objectPopup = document.createElement('div');
+objectPopup.className = 'object-popup hidden';
+objectPopup.id = 'object-popup';
+objectPopup.innerHTML = `
+  <div class="object-popup-header">
+    <span class="object-popup-name" id="popup-name">Object</span>
+    <button id="popup-delete" title="Delete object"
+      style="background:none;border:none;cursor:pointer;color:#555;font-size:22px;padding:0 2px;">&#128465;</button>
+  </div>
+  <div id="popup-move-label" style="font-size:11px;color:#777;margin:8px 0 6px 0;">Move your object</div>
+  <div class="popup-axis-row">
+    <span class="axis-label">L/R</span>
+    <input type="range" data-axis="x" data-type="position" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <div class="popup-axis-row">
+    <span class="axis-label">U/D</span>
+    <input type="range" data-axis="y" data-type="position" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <div class="popup-axis-row">
+    <span class="axis-label">F/B</span>
+    <input type="range" data-axis="z" data-type="position" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <button class="popup-reset-btn" id="reset-position-btn"
+    style="width:100%;margin:4px 0 8px 0;background:#1a1a1a;
+    border:1px solid #333;border-radius:3px;color:#666;
+    font-size:11px;padding:5px;cursor:pointer;">
+    &#8634; Reset Position
+  </button>
+  <div id="popup-resize-label" style="font-size:11px;color:#777;margin:8px 0 6px 0;">Resize your object</div>
+  <div class="popup-axis-row">
+    <span class="axis-label">X</span>
+    <input type="range" data-axis="x" data-type="scale" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <div class="popup-axis-row">
+    <span class="axis-label">Y</span>
+    <input type="range" data-axis="y" data-type="scale" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <div class="popup-axis-row">
+    <span class="axis-label">Z</span>
+    <input type="range" data-axis="z" data-type="scale" min="-3" max="3" step="0.001" value="0">
+  </div>
+  <button class="popup-reset-btn" id="reset-scale-btn"
+    style="width:100%;margin:4px 0 0 0;background:#1a1a1a;
+    border:1px solid #333;border-radius:3px;color:#666;
+    font-size:11px;padding:5px;cursor:pointer;">
+    &#8634; Reset Scale
+  </button>
+`;
+document.getElementById('viewport').appendChild(objectPopup);
+
+// Localized labels
+document.getElementById('popup-move-label').innerText = getTranslation('panelMove');
+document.getElementById('popup-resize-label').innerText = getTranslation('panelResize');
+
+const popupSliders = objectPopup.querySelectorAll('input[type="range"]');
+const sliderBaseValues = {};
+
+objectPopup.querySelectorAll('[data-type="position"]').forEach(slider => {
+  slider.addEventListener('mousedown', () => {
+    if (!selectedObject) return;
+    sliderBaseValues[slider.dataset.axis] = selectedObject.position[slider.dataset.axis];
+    slider.value = 0;
+  });
+  slider.addEventListener('input', () => {
+    if (!selectedObject) return;
+    const base = sliderBaseValues[slider.dataset.axis] || 0;
+    selectedObject.position[slider.dataset.axis] = base + parseFloat(slider.value) * 0.3;
+    updateTransformUI();
+  });
+});
+
+objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
+  slider.addEventListener('mousedown', () => {
+    if (!selectedObject) return;
+    sliderBaseValues['scale_' + slider.dataset.axis] = selectedObject.scale[slider.dataset.axis];
+    slider.value = 0;
+  });
+  slider.addEventListener('input', () => {
+    if (!selectedObject) return;
+    const base = sliderBaseValues['scale_' + slider.dataset.axis] || 1;
+    selectedObject.scale[slider.dataset.axis] = Math.max(0.01, base + parseFloat(slider.value) * 0.15);
+    updateTransformUI();
+  });
+});
+
+const _popupDeleteEl = document.getElementById('popup-delete');
+_popupDeleteEl.addEventListener('click', () => {
+  deleteSelection();
+});
+_popupDeleteEl.addEventListener('mouseenter', (e) => e.target.style.color = '#cc4444');
+_popupDeleteEl.addEventListener('mouseleave', (e) => e.target.style.color = '#555');
+
+document.getElementById('reset-position-btn').addEventListener('click', () => {
+  if (!selectedObject) return;
+  selectedObject.position.set(0, 0, 0);
+  objectPopup.querySelectorAll('[data-type="position"]').forEach(slider => {
+    slider.value = 0;
+  });
+  updateTransformUI();
+});
+
+document.getElementById('reset-scale-btn').addEventListener('click', () => {
+  if (!selectedObject) return;
+  selectedObject.scale.set(1, 1, 1);
+  objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
+    slider.value = 0;
+  });
+  updateTransformUI();
+});
+
+// Double-click rename
+objectPopup.addEventListener('dblclick', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('object-popup-name')) return;
+  if (!selectedObject) return;
+  const nameEl = e.target;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = selectedObject.userData.name || '';
+  input.className = 'object-popup-name editing';
+  input.style.cssText = 'width:100px;font-size:12px;';
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let restored = false;
+  const restore = (newName) => {
+    if (restored) return;
+    restored = true;
+    if (newName !== null) {
+      selectedObject.userData.name = newName || selectedObject.userData.name;
+    }
+    nameEl.textContent = selectedObject.userData.name;
+    input.replaceWith(nameEl);
+  };
+  input.addEventListener('blur', () => restore(input.value));
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); restore(input.value); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); restore(null); }
+  });
+});
+
+function showObjectPopup(obj) {
+  if (!obj) return;
+  objectPopup.classList.remove('hidden');
+  document.getElementById('popup-name').textContent =
+    obj.userData.name || obj.userData.modelName || 'Object';
+  // Delta-mode: sliders open centered; mousedown captures the live base value
+  popupSliders.forEach(s => { s.value = 0; });
+  updatePopupPosition();
+}
+
+function hideObjectPopup() {
+  objectPopup.classList.add('hidden');
+}
+
+function getScreenPosition(object) {
+  const vector = new THREE.Vector3();
+  object.getWorldPosition(vector);
+  vector.project(camera);
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = (vector.x * 0.5 + 0.5) * rect.width;
+  const y = (-vector.y * 0.5 + 0.5) * rect.height;
+  return { x, y };
+}
+
+function updatePopupPosition() {
+  if (!selectedObject || objectPopup.classList.contains('hidden')) return;
+  const pos = getScreenPosition(selectedObject);
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = Math.min(pos.x + 20, rect.width - 240);
+  const y = Math.min(Math.max(pos.y - 60, 40), rect.height - 300);
+  objectPopup.style.left = x + 'px';
+  objectPopup.style.top = y + 'px';
+}
+
+_popupReady = true;
+
+
 let isSKeyDown = false;
 let isGKeyDown = false;
 let isTKeyDown = false;
@@ -466,17 +654,15 @@ renderer.domElement.addEventListener('wheel', (e) => {
   }
 }, { passive: false });
 
-const deleteBtn = document.getElementById('delete-btn');
 const deleteSelection = () => {
   if (selectedObject) {
     scene.remove(selectedObject);
     selectedObject = null;
-    deleteBtn.classList.add('hidden');
     scalePanel.classList.add('hidden');
+    hideObjectPopup();
   }
 };
 
-deleteBtn.addEventListener('click', deleteSelection);
 window.addEventListener('keyup', (e) => {
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (!isSettingTarget) deleteSelection();
@@ -489,15 +675,24 @@ document.getElementById('clear-scene-btn').addEventListener('click', () => {
     toRemove.forEach(obj => scene.remove(obj));
     if (selectedObject) {
       selectedObject = null;
-      deleteBtn.classList.add('hidden');
       scalePanel.classList.add('hidden');
+      hideObjectPopup();
     }
   }
 });
 
+function getMouseNDC(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    y: -((event.clientY - rect.top) / rect.height) * 2 + 1
+  };
+}
+
 renderer.domElement.addEventListener('pointerdown', (event) => {
-  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  const ndc = getMouseNDC(event);
+  mouse.x = ndc.x;
+  mouse.y = ndc.y;
 
   raycaster.setFromCamera(mouse, camera);
 
@@ -568,13 +763,11 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
           }
         });
         
-        deleteBtn.classList.remove('hidden');
         updateTransformUI();
-        scalePanel.classList.remove('hidden');
+        showObjectPopup(selectedObject);
       }
     } else {
-      deleteBtn.classList.add('hidden');
-      scalePanel.classList.add('hidden');
+      hideObjectPopup();
     }
   }
 });
@@ -586,6 +779,8 @@ document.getElementById('add-box-btn').addEventListener('click', () => {
   mesh.position.y = 0.5;
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Box";
+  boxCount++;
+  mesh.userData.name = "Box" + boxCount;
   scene.add(mesh);
 });
 
@@ -597,6 +792,8 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
   mesh.position.x = 2;
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Sphere";
+  sphereCount++;
+  mesh.userData.name = "Sphere" + sphereCount;
   scene.add(mesh);
 });
 
@@ -639,6 +836,9 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
     
     wrapper.userData.isUserObject = true;
     wrapper.userData.modelName = nameWithoutExt;
+    wrapper.userData.name = nameWithoutExt
+      ? nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)
+      : 'Model';
     scene.add(wrapper);
     loadingOverlay.classList.add('hidden');
   };
@@ -665,7 +865,7 @@ let recordingStartTime = 0;
 let recordingInterval = null;
 
 const buttonsToDisable = [
-  'record-btn', 'stop-btn', 'add-box-btn', 'add-sphere-btn', 'import-model-btn', 'clear-scene-btn', 'set-target-btn', 'clear-target-btn', 'delete-btn', 'cam-play-btn', 'cam-stop-btn'
+  'record-btn', 'stop-btn', 'add-box-btn', 'add-sphere-btn', 'import-model-btn', 'clear-scene-btn', 'set-target-btn', 'clear-target-btn', 'cam-play-btn', 'cam-stop-btn'
 ];
 
 function disableButtons() {
@@ -1493,6 +1693,10 @@ function setLayout(mode) {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+    }
+    // Reposition object popup after viewport dimensions have settled
+    if (selectedObject && !objectPopup.classList.contains('hidden')) {
+      showObjectPopup(selectedObject);
     }
   });
 }
