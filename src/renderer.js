@@ -475,6 +475,7 @@ objectPopup.querySelectorAll('[data-type="position"]').forEach(slider => {
     const base = sliderBaseValues[slider.dataset.axis] || 0;
     selectedObject.position[slider.dataset.axis] = base + parseFloat(slider.value) * 0.3;
     updateTransformUI();
+    markSceneModified();
   });
 });
 
@@ -489,6 +490,7 @@ objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
     const base = sliderBaseValues['scale_' + slider.dataset.axis] || 1;
     selectedObject.scale[slider.dataset.axis] = Math.max(0.01, base + parseFloat(slider.value) * 0.15);
     updateTransformUI();
+    markSceneModified();
   });
 });
 
@@ -506,6 +508,7 @@ document.getElementById('reset-position-btn').addEventListener('click', () => {
     slider.value = 0;
   });
   updateTransformUI();
+  markSceneModified();
 });
 
 document.getElementById('reset-scale-btn').addEventListener('click', () => {
@@ -515,6 +518,7 @@ document.getElementById('reset-scale-btn').addEventListener('click', () => {
     slider.value = 0;
   });
   updateTransformUI();
+  markSceneModified();
 });
 
 // Double-click rename - UUID-safe (popup may outlive selection changes mid-edit)
@@ -547,6 +551,7 @@ objectPopup.addEventListener('dblclick', (e) => {
     nameEl.textContent = target ? target.userData.name : (newName || '');
     input.replaceWith(nameEl);
     updateLayersPanel();
+    markSceneModified();
   };
   input.addEventListener('blur', () => restore(input.value));
   input.addEventListener('keydown', (ev) => {
@@ -701,6 +706,7 @@ function updateLayersPanel() {
             const popupName = document.getElementById('popup-name');
             if (popupName) popupName.textContent = newName;
           }
+          markSceneModified();
         }
         updateLayersPanel();
       };
@@ -720,6 +726,7 @@ function updateLayersPanel() {
         hideObjectPopup();
       }
       updateLayersPanel();
+      markSceneModified();
     });
 
     list.appendChild(item);
@@ -816,6 +823,7 @@ const deleteSelection = () => {
     scalePanel.classList.add('hidden');
     hideObjectPopup();
     updateLayersPanel();
+    markSceneModified();
   }
 };
 
@@ -836,6 +844,7 @@ document.getElementById('clear-scene-btn').addEventListener('click', () => {
       hideObjectPopup();
     }
     updateLayersPanel();
+    markSceneModified();
   }
 });
 
@@ -944,6 +953,7 @@ document.getElementById('add-box-btn').addEventListener('click', () => {
   mesh.userData.name = "Box" + boxCount;
   scene.add(mesh);
   updateLayersPanel();
+  markSceneModified();
 });
 
 document.getElementById('add-sphere-btn').addEventListener('click', () => {
@@ -959,6 +969,7 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
   mesh.userData.name = "Sphere" + sphereCount;
   scene.add(mesh);
   updateLayersPanel();
+  markSceneModified();
 });
 
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -1018,6 +1029,7 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
       : 'Model';
     scene.add(wrapper);
     updateLayersPanel();
+    markSceneModified();
     loadingOverlay.classList.add('hidden');
   };
 
@@ -1590,6 +1602,7 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
+  if (sunDragging) markSceneModified();
   sunDragging = false;
   sunBtn.style.outline = 'none';
 });
@@ -1642,6 +1655,7 @@ lensSelect.addEventListener('change', () => {
   camera.updateProjectionMatrix();
   lensMmInput.value = mm;
   updateLensHud(lens, mm);
+  markSceneModified();
 });
 
 lensMmInput.addEventListener('change', () => {
@@ -1652,6 +1666,7 @@ lensMmInput.addEventListener('change', () => {
   targetFov = mmToFov(mm);
   const lens = LENS_TEMPLATES[parseInt(lensSelect.value)];
   updateLensHud(lens, mm);
+  markSceneModified();
 });
 
 // ---- Mission 7: UX Pass ----
@@ -1825,18 +1840,82 @@ function showWalkthrough() {
   renderSlide();
 }
 
-// ---- Mission G ext: Auto Save (placeholder for future scene autosave) ----
+// ---- Mission I: Auto Save ----
 let _autosaveTimer = null;
+let sceneModifiedSinceLastSave = false;
+
+function markSceneModified() {
+  sceneModifiedSinceLastSave = true;
+}
+
+async function performAutosave() {
+  if (!sceneModifiedSinceLastSave) return;
+  const folder = localStorage.getItem('autosave_folder');
+  if (!folder) return;
+
+  const toast = showPersistentToast('Auto-saving...');
+
+  try {
+    renderer.render(scene, camera);
+    const thumbnail = renderer.domElement.toDataURL('image/jpeg', 0.4);
+
+    const objects = [];
+    scene.children.filter(c => c.userData && c.userData.isUserObject).forEach(obj => {
+      const entry = {
+        uuid: obj.uuid,
+        name: obj.userData.name || 'Object',
+        type: obj.userData.type || 'box',
+        position: obj.position.toArray(),
+        scale: obj.scale.toArray(),
+        rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z]
+      };
+      if (obj.material && obj.material.color) entry.color = obj.material.color.getHexString();
+      if (obj.userData.modelData) {
+        entry.modelData = obj.userData.modelData;
+        entry.modelFormat = obj.userData.modelFormat;
+      }
+      objects.push(entry);
+    });
+
+    const sceneData = {
+      version: '1.0',
+      name: currentSceneName || 'Untitled',
+      savedAt: new Date().toISOString(),
+      isAutosave: true,
+      thumbnail,
+      camera: {
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        fov: camera.fov
+      },
+      objects,
+      lighting: {
+        dirLightPosition: dirLight.position.toArray()
+      }
+    };
+
+    const filename = `${currentSceneName || 'Untitled'}_autosave.ent.bak`;
+    const filePath = folder.replace(/[\\/]+$/, '') + '/' + filename;
+    await window.electronAPI.writeFile(filePath, JSON.stringify(sceneData, null, 2));
+    sceneModifiedSinceLastSave = false;
+    updateToast(toast, 'Auto-saved \u2713');
+  } catch (err) {
+    updateToast(toast, 'Auto-save failed');
+    console.warn('[Autosave] failed silently:', err);
+  }
+}
+
 function setupAutosave() {
   if (_autosaveTimer) { clearInterval(_autosaveTimer); _autosaveTimer = null; }
   const interval = parseInt(localStorage.getItem('autosave_interval') || '0', 10);
-  if (interval > 0) {
-    _autosaveTimer = setInterval(() => {
-      // Reserved hook for future scene auto-save logic
-    }, interval * 60 * 1000);
-  }
+  if (interval <= 0) return;
+  _autosaveTimer = setInterval(performAutosave, interval * 60 * 1000);
+  console.log(`[Autosave] set to every ${interval} minutes`);
 }
 setupAutosave();
+
+// Camera moves count as scene modifications
+controls.addEventListener('change', markSceneModified);
 
 // ---- Mission G ext: Preferences window ----
 function showPreferences() {
@@ -2077,6 +2156,22 @@ function showToast(message) {
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 2000);
 }
 
+function showPersistentToast(message) {
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:8px 16px;z-index:4000;pointer-events:none;transition:opacity 0.5s;';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  return toast;
+}
+
+function updateToast(toast, message) {
+  toast.textContent = message;
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 500);
+  }, 2000);
+}
+
 function addToRecentScenes(filePath, name, thumbnail) {
   let recents = [];
   try { recents = JSON.parse(localStorage.getItem('recent_scenes') || '[]'); } catch (e) {}
@@ -2166,6 +2261,7 @@ async function saveScene(saveAs = false) {
     await window.electronAPI.writeFile(savePath, JSON.stringify(sceneData, null, 2));
     updateWindowTitle();
     addToRecentScenes(savePath, sceneData.name, thumbnail);
+    sceneModifiedSinceLastSave = false;
     showToast('Scene saved');
   } catch (err) {
     showToast('Save failed: ' + err.message);
@@ -2265,6 +2361,7 @@ async function loadScene(filePath) {
   updateWindowTitle();
   updateLayersPanel();
   addToRecentScenes(filePath, currentSceneName, data.thumbnail);
+  sceneModifiedSinceLastSave = false;
   showToast('Scene loaded');
 }
 
