@@ -1192,13 +1192,45 @@ document.getElementById('viewport').appendChild(lensHudEl);
 
 // ---- Lens Selector Handler ----
 const lensSelect = document.getElementById('lens-select');
+const lensMmInput = document.getElementById('lens-mm-input');
+
+// Full-frame 35mm sensor diagonal = 43.27mm
+function mmToFov(mm) {
+  return 2 * Math.atan(21.634 / mm) * (180 / Math.PI);
+}
+
+function getLensMmFromName(name) {
+  const m = name.match(/(\d+)mm/);
+  return m ? parseInt(m[1]) : 50;
+}
+
+function getLensBaseName(name) {
+  return name.replace(/\s*\d+mm.*$/, '').trim();
+}
+
+function updateLensHud(lens, mm) {
+  document.getElementById('lens-hud').innerText = `${getLensBaseName(lens.name)} \u2014 ${mm}mm`;
+}
+
 lensSelect.addEventListener('change', () => {
   const lens = LENS_TEMPLATES[parseInt(lensSelect.value)];
+  const mm = getLensMmFromName(lens.name);
   targetFov = lens.fov;
   camera.near = lens.near;
   camera.far = lens.far;
   camera.updateProjectionMatrix();
-  document.getElementById('lens-hud').innerText = lens.name;
+  lensMmInput.value = mm;
+  updateLensHud(lens, mm);
+});
+
+lensMmInput.addEventListener('change', () => {
+  let mm = parseInt(lensMmInput.value);
+  if (isNaN(mm)) mm = 35;
+  mm = Math.max(8, Math.min(300, mm));
+  lensMmInput.value = mm;
+  targetFov = mmToFov(mm);
+  const lens = LENS_TEMPLATES[parseInt(lensSelect.value)];
+  updateLensHud(lens, mm);
 });
 
 // ---- Mission 7: UX Pass ----
