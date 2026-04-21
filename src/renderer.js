@@ -1069,12 +1069,49 @@ function resetRecordingTimer() {
   timeDisplay.textContent = '00:00';
 }
 
-recordBtn.addEventListener('click', () => {
+// Mission G - persistent MP4 save folder
+let mp4SaveFolder = localStorage.getItem('refluent_mp4_folder') || null;
+
+window.electronAPI.onMp4FolderChanged((folder) => {
+  if (folder) {
+    mp4SaveFolder = folder;
+    localStorage.setItem('refluent_mp4_folder', folder);
+  }
+});
+
+async function ensureMp4Folder() {
+  if (mp4SaveFolder) return mp4SaveFolder;
+  const folder = await window.electronAPI.selectMp4Folder();
+  if (folder) {
+    mp4SaveFolder = folder;
+    localStorage.setItem('refluent_mp4_folder', folder);
+  }
+  return folder;
+}
+
+function getNextMp4Filename() {
+  const count = parseInt(localStorage.getItem('refluent_mp4_count') || '0', 10) + 1;
+  localStorage.setItem('refluent_mp4_count', String(count));
+  return `Refluent_${String(count).padStart(3, '0')}.mp4`;
+}
+
+function _missingFolderMessage() {
+  const lang = localStorage.getItem('refluent_lang') || 'en';
+  return lang === 'kr' ? '녹화하려면 저장 폴더를 선택해주세요.' : 'Please select a save folder to record.';
+}
+
+recordBtn.addEventListener('click', async () => {
   recordedChunks = [];
-  
+
   const userObjects = scene.children.filter(c => c.userData.isUserObject);
   if (userObjects.length === 0) {
     alert(getTranslation('noObjectsWarning'));
+    return;
+  }
+
+  const folder = await ensureMp4Folder();
+  if (!folder) {
+    alert(_missingFolderMessage());
     return;
   }
   
@@ -1134,7 +1171,13 @@ recordBtn.addEventListener('click', () => {
     disableButtons();
     document.getElementById('export-overlay').classList.remove('hidden');
     
-    const result = await window.electronAPI.convertWebmToMp4({ arrayBuffer, duration });
+    const outputFilename = getNextMp4Filename();
+    const result = await window.electronAPI.convertWebmToMp4({
+      arrayBuffer,
+      duration,
+      outputFolder: mp4SaveFolder,
+      outputFilename
+    });
     
     document.getElementById('export-overlay').classList.add('hidden');
     enableButtons();

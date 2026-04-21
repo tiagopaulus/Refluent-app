@@ -14,11 +14,32 @@ fluentFfmpeg.setFfmpegPath(ffmpegPath);
 let mainWindow;
 let currentLang = 'en';
 
+async function pickMp4Folder() {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select folder for MP4 recordings'
+  });
+  if (!result.canceled && result.filePaths.length > 0) return result.filePaths[0];
+  return null;
+}
+
 function buildMenu() {
   const template = [
     {
       label: 'Refluent',
-      submenu: [{ role: 'quit' }]
+      submenu: [
+        {
+          label: 'Set MP4 Save Folder...',
+          click: async () => {
+            const folder = await pickMp4Folder();
+            if (folder && mainWindow) {
+              mainWindow.webContents.send('mp4-folder-changed', folder);
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
     },
     {
       label: 'View',
@@ -99,6 +120,11 @@ app.on('window-all-closed', () => {
   }
 });
 
+// IPC Handler: Pick the MP4 save folder
+ipcMain.handle('select-mp4-folder', async () => {
+  return await pickMp4Folder();
+});
+
 // IPC Handler: Open File Dialog (images, etc.)
 ipcMain.handle('open-file-dialog', async (_event, options) => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -122,7 +148,7 @@ ipcMain.handle('dialog:openModel', async () => {
 });
 
 // IPC Handler: Convert WebM to MP4
-ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration }) => {
+ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration, outputFolder, outputFilename }) => {
   return new Promise((resolve, reject) => {
     try {
       const tempBasePath = path.join(app.getPath('temp'), `viewport-recording-${Date.now()}`);
@@ -187,19 +213,29 @@ ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration 
                return resolve({ success: false, message: 'Failed to find exported MP4.' });
             }
 
-            const saveResult = await dialog.showSaveDialog({
-              title: 'Save MP4 Recording',
-              defaultPath: path.join(app.getPath('documents'), 'viewport-recording.mp4'),
-              filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
-            });
+            let outputMp4Path;
+            if (outputFolder && outputFilename) {
+              outputMp4Path = path.join(outputFolder, outputFilename);
+            } else {
+              const saveResult = await dialog.showSaveDialog({
+                title: 'Save MP4 Recording',
+                defaultPath: path.join(app.getPath('documents'), 'viewport-recording.mp4'),
+                filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
+              });
 
-            if (saveResult.canceled) {
-              if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
-              return resolve({ success: false, message: 'Canceled by user' });
+              if (saveResult.canceled) {
+                if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
+                return resolve({ success: false, message: 'Canceled by user' });
+              }
+              outputMp4Path = saveResult.filePath;
             }
 
-            const outputMp4Path = saveResult.filePath;
-            fs.renameSync(tempMp4Path, outputMp4Path);
+            try {
+              fs.renameSync(tempMp4Path, outputMp4Path);
+            } catch (renameErr) {
+              if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
+              return resolve({ success: false, message: 'Failed to write MP4 to folder: ' + renameErr.message });
+            }
             resolve({ success: true, filePath: outputMp4Path });
           })
           .on('error', (err) => {
