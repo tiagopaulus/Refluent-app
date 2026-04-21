@@ -3,18 +3,18 @@
 // checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', imageUrl?, error? }>
 // cancel(jobId) → Promise<void>
 
-const API_KEY = process.env.NANA_BANANA_API_KEY || '';
-const API_URL = 'https://api.nanabanana.ai/v1'; // update when confirmed
+const API_KEY = process.env.NANOBANANA_API_KEY || '';
+const API_URL = 'https://api.nanobanana.ai/v1'; // update when confirmed
 
-export const NanaBananaAdapter = {
+export const NanobananaAdapter = {
   async generate(prompt, referenceImagePath) {
     // TODO: implement when API key is available
-    throw new Error('NanaBananaAdapter: not yet implemented');
+    throw new Error('NanobananaAdapter: not yet implemented');
   },
   async checkStatus(jobId) {
-    throw new Error('NanaBananaAdapter: not yet implemented');
+    throw new Error('NanobananaAdapter: not yet implemented');
   },
   async cancel(jobId) {
-    throw new Error('NanaBananaAdapter: not yet implemented');
+    throw new Error('NanobananaAdapter: not yet implemented');
   }
 };

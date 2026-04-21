@@ -2802,16 +2802,8 @@ function syncNodeEditor() {
     }
   });
 
-  // Update bezier connection colors
-  document.querySelectorAll('#node-bezier path[data-conn]').forEach((path, i) => {
-    if (i < pipelineState.currentStep - 1) {
-      path.setAttribute('stroke', '#555'); path.setAttribute('stroke-width', '0.5'); path.setAttribute('opacity', '0.5');
-    } else if (i === pipelineState.currentStep - 1) {
-      path.setAttribute('stroke', '#888'); path.setAttribute('stroke-width', '0.8'); path.setAttribute('opacity', '0.8');
-    } else {
-      path.setAttribute('stroke', '#333'); path.setAttribute('stroke-width', '0.5'); path.setAttribute('opacity', '0.3');
-    }
-  });
+  if (typeof updateNodeMediaPreviews === 'function') updateNodeMediaPreviews();
+  if (typeof redrawNodeConnections === 'function') redrawNodeConnections();
 }
 
 function wireNodeInteractions() {
@@ -2920,60 +2912,581 @@ function wireNodeInteractions() {
   }
 }
 
+// ---- Mission J: Node Editor overhaul ----
+const nodeEditorState = {
+  offsetX: 0, offsetY: 0,
+  scale: 1,
+  minScale: 0.2, maxScale: 3,
+  isDragging: false,
+  lastMouseX: 0, lastMouseY: 0
+};
+
+// World-space positions — survive zoom/pan and update on drag
+const nodeBasePositions = {
+  mp4:      { x: 100, y: 60 },
+  frame:    { x: 100, y: 260 },
+  refimage: { x: 100, y: 460 },
+  prompt:   { x: 100, y: 660 },
+  render:   { x: 100, y: 860 },
+  upscale:  { x: 100, y: 1060 }
+};
+
+function worldToScreen(worldX, worldY) {
+  return {
+    x: worldX * nodeEditorState.scale + nodeEditorState.offsetX,
+    y: worldY * nodeEditorState.scale + nodeEditorState.offsetY
+  };
+}
+
+function drawNodeGrid() {
+  const canvas = document.getElementById('node-grid-canvas');
+  if (!canvas) return;
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  if (canvas.width === 0 || canvas.height === 0) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const gridSize = 24 * nodeEditorState.scale;
+  if (gridSize < 4) return;
+  const offsetX = ((nodeEditorState.offsetX % gridSize) + gridSize) % gridSize;
+  const offsetY = ((nodeEditorState.offsetY % gridSize) + gridSize) % gridSize;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let x = offsetX; x < canvas.width; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = offsetY; y < canvas.height; y += gridSize) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+
+  const largeGrid = gridSize * 5;
+  const largeOffsetX = ((nodeEditorState.offsetX % largeGrid) + largeGrid) % largeGrid;
+  const largeOffsetY = ((nodeEditorState.offsetY % largeGrid) + largeGrid) % largeGrid;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 0.8;
+  for (let x = largeOffsetX; x < canvas.width; x += largeGrid) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = largeOffsetY; y < canvas.height; y += largeGrid) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+}
+
+function updateNodePositions() {
+  const s = nodeEditorState.scale;
+  const BASE_SIZE = 160;
+  const scaledSize = BASE_SIZE * s;
+
+  Object.keys(nodeBasePositions).forEach(nodeId => {
+    const node = document.querySelector(`.node-card[data-node="${nodeId}"]`);
+    if (!node) return;
+
+    const screen = worldToScreen(nodeBasePositions[nodeId].x, nodeBasePositions[nodeId].y);
+
+    node.style.left = screen.x + 'px';
+    node.style.top = screen.y + 'px';
+    node.style.width = scaledSize + 'px';
+    node.style.height = scaledSize + 'px';
+    node.style.minHeight = 'unset';
+    node.style.transform = 'none';
+    node.style.fontSize = Math.max(8, 11 * s) + 'px';
+    node.style.borderRadius = Math.max(3, 8 * s) + 'px';
+    node.style.overflow = 'hidden';
+
+    const titleBar = node.querySelector('.node-title-bar');
+    if (titleBar) {
+      titleBar.style.padding = `${Math.max(4, 8 * s)}px ${Math.max(6, 10 * s)}px`;
+      titleBar.style.fontSize = Math.max(8, 11 * s) + 'px';
+    }
+
+    const body = node.querySelector('.node-body');
+    if (body) {
+      const titleH = titleBar ? titleBar.offsetHeight : Math.max(20, 28 * s);
+      body.style.height = (scaledSize - titleH) + 'px';
+      body.style.padding = Math.max(2, 6 * s) + 'px';
+      body.style.boxSizing = 'border-box';
+    }
+
+    const preview = node.querySelector('.node-media-preview');
+    if (preview) {
+      preview.style.width = '100%';
+      preview.style.height = '100%';
+    }
+
+    const portSize = Math.max(5, 9 * s);
+    node.querySelectorAll('.node-port-in, .node-port-out').forEach(port => {
+      port.style.width = portSize + 'px';
+      port.style.height = portSize + 'px';
+      port.style.pointerEvents = 'all';
+      port.style.zIndex = '30';
+    });
+
+    const dot = node.querySelector('.node-status-dot');
+    if (dot) {
+      const dotSize = Math.max(4, 6 * s);
+      dot.style.width = dotSize + 'px';
+      dot.style.height = dotSize + 'px';
+    }
+  });
+
+  redrawNodeConnections();
+  drawNodeGrid();
+}
+
+// Mission J fix - real connectable ports
+const nodeConnections = [];
+let draggingConnection = null;
+let selectedConnectionId = null;
+
+function redrawNodeConnections() {
+  const svg = document.getElementById('node-connections-svg');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  svg.style.pointerEvents = 'none';
+  const panel = document.getElementById('node-panel');
+  if (!panel) return;
+  const panelRect = panel.getBoundingClientRect();
+
+  nodeConnections.forEach(conn => {
+    const fromNode = document.querySelector(`.node-card[data-node="${conn.fromNode}"]`);
+    const toNode = document.querySelector(`.node-card[data-node="${conn.toNode}"]`);
+    if (!fromNode || !toNode) return;
+    const fromPort = fromNode.querySelector('.node-port-out');
+    const toPort = toNode.querySelector('.node-port-in');
+    if (!fromPort || !toPort) return;
+
+    const fr = fromPort.getBoundingClientRect();
+    const tr = toPort.getBoundingClientRect();
+    const x1 = fr.left - panelRect.left + fr.width / 2;
+    const y1 = fr.top - panelRect.top + fr.height / 2;
+    const x2 = tr.left - panelRect.left + tr.width / 2;
+    const y2 = tr.top - panelRect.top + tr.height / 2;
+    const cp = Math.abs(x2 - x1) * 0.5 + 60;
+    const isSelected = conn.id === selectedConnectionId;
+    const dStr = `M ${x1} ${y1} C ${x1+cp} ${y1}, ${x2-cp} ${y2}, ${x2} ${y2}`;
+
+    // Wide invisible hit area for easier clicks
+    const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hitPath.setAttribute('d', dStr);
+    hitPath.setAttribute('stroke', 'transparent');
+    hitPath.setAttribute('stroke-width', '12');
+    hitPath.setAttribute('fill', 'none');
+    hitPath.style.pointerEvents = 'visibleStroke';
+    hitPath.style.cursor = 'pointer';
+
+    hitPath.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedConnectionId = isSelected ? null : conn.id;
+      redrawNodeConnections();
+    });
+
+    hitPath.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const idx = nodeConnections.findIndex(c => c.id === conn.id);
+      if (idx !== -1) nodeConnections.splice(idx, 1);
+      const portRect = fromPort.getBoundingClientRect();
+      const pr = panel.getBoundingClientRect();
+      draggingConnection = {
+        fromNode: conn.fromNode,
+        startX: portRect.left - pr.left + portRect.width / 2,
+        startY: portRect.top - pr.top + portRect.height / 2,
+        currentX: e.clientX - pr.left,
+        currentY: e.clientY - pr.top,
+        type: 'reconnect'
+      };
+      selectedConnectionId = null;
+      redrawNodeConnections();
+      updatePipelineFromConnections();
+    });
+
+    svg.appendChild(hitPath);
+
+    // Visible path
+    const visPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    visPath.setAttribute('d', dStr);
+    visPath.setAttribute('stroke', isSelected ? '#ffffff' : '#667');
+    visPath.setAttribute('stroke-width', isSelected ? '2' : '1.5');
+    visPath.setAttribute('fill', 'none');
+    visPath.setAttribute('opacity', isSelected ? '1' : '0.7');
+    visPath.style.pointerEvents = 'none';
+    svg.appendChild(visPath);
+  });
+
+  // Drag preview
+  if (draggingConnection) {
+    const x1 = draggingConnection.startX;
+    const y1 = draggingConnection.startY;
+    const x2 = draggingConnection.currentX;
+    const y2 = draggingConnection.currentY;
+    const cp = Math.abs(x2 - x1) * 0.5 + 30;
+    const preview = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    preview.setAttribute('d', `M ${x1} ${y1} C ${x1+cp} ${y1}, ${x2-cp} ${y2}, ${x2} ${y2}`);
+    preview.setAttribute('stroke', '#aaa');
+    preview.setAttribute('stroke-width', '1.2');
+    preview.setAttribute('stroke-dasharray', '5 4');
+    preview.setAttribute('fill', 'none');
+    preview.setAttribute('opacity', '0.8');
+    preview.style.pointerEvents = 'none';
+    svg.appendChild(preview);
+  }
+}
+
+function initNodePorts() {
+  document.querySelectorAll('.node-port-out').forEach(port => {
+    port.style.cursor = 'crosshair';
+    port.style.pointerEvents = 'all';
+    port.style.zIndex = '30';
+
+    // Clone-replace removes any prior listeners so this is safe to call repeatedly
+    const newPort = port.cloneNode(true);
+    port.parentNode.replaceChild(newPort, port);
+
+    newPort.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const panel = document.getElementById('node-panel');
+      const panelRect = panel.getBoundingClientRect();
+      const portRect = newPort.getBoundingClientRect();
+      const fromNode = newPort.closest('.node-card').dataset.node;
+      draggingConnection = {
+        fromNode,
+        startX: portRect.left - panelRect.left + portRect.width / 2,
+        startY: portRect.top - panelRect.top + portRect.height / 2,
+        currentX: portRect.left - panelRect.left + portRect.width / 2,
+        currentY: portRect.top - panelRect.top + portRect.height / 2,
+        type: 'new'
+      };
+      newPort.style.background = '#aaa';
+    });
+  });
+
+  document.querySelectorAll('.node-port-in').forEach(port => {
+    port.style.cursor = 'crosshair';
+    port.style.pointerEvents = 'all';
+    port.style.zIndex = '30';
+
+    const newPort = port.cloneNode(true);
+    port.parentNode.replaceChild(newPort, port);
+
+    newPort.addEventListener('mouseenter', () => {
+      if (draggingConnection) {
+        newPort.style.background = '#4a9a4a';
+        newPort.style.borderColor = '#4a9a4a';
+      }
+    });
+    newPort.addEventListener('mouseleave', () => {
+      newPort.style.background = '#444';
+      newPort.style.borderColor = '#666';
+    });
+    newPort.addEventListener('mouseup', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (!draggingConnection) return;
+      const toNode = newPort.closest('.node-card').dataset.node;
+      if (toNode === draggingConnection.fromNode) {
+        draggingConnection = null;
+        redrawNodeConnections();
+        return;
+      }
+      const existingIdx = nodeConnections.findIndex(c => c.toNode === toNode);
+      if (existingIdx !== -1) nodeConnections.splice(existingIdx, 1);
+      nodeConnections.push({
+        fromNode: draggingConnection.fromNode,
+        toNode,
+        id: Date.now() + Math.random()
+      });
+      draggingConnection = null;
+      newPort.style.background = '#444';
+      newPort.style.borderColor = '#666';
+      redrawNodeConnections();
+      updatePipelineFromConnections();
+    });
+  });
+}
+
+// Panel-level listeners for drag preview, drag cancel, deselect.
+// Added once at module init since the panel element is stable.
+(function _initNodePanelInteractions() {
+  const panel = document.getElementById('node-panel');
+  if (!panel || panel.dataset.connListenersWired === '1') return;
+  panel.dataset.connListenersWired = '1';
+
+  panel.addEventListener('mousemove', (e) => {
+    if (!draggingConnection) return;
+    const pr = panel.getBoundingClientRect();
+    draggingConnection.currentX = e.clientX - pr.left;
+    draggingConnection.currentY = e.clientY - pr.top;
+    redrawNodeConnections();
+  });
+
+  panel.addEventListener('mouseup', () => {
+    if (draggingConnection) {
+      draggingConnection = null;
+      document.querySelectorAll('.node-port-out, .node-port-in').forEach(p => {
+        p.style.background = '#444';
+        p.style.borderColor = '#666';
+      });
+      redrawNodeConnections();
+    }
+  });
+
+  // Click on empty panel area deselects the active connection
+  panel.addEventListener('click', (e) => {
+    const grid = document.getElementById('node-grid-canvas');
+    if (e.target !== panel && e.target !== grid) return;
+    if (selectedConnectionId !== null) {
+      selectedConnectionId = null;
+      redrawNodeConnections();
+    }
+  });
+})();
+
+// Delete / Backspace removes the selected connection (separate from 3D-object delete on keyup)
+window.addEventListener('keydown', (e) => {
+  if (_isTypingTarget()) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedConnectionId !== null) {
+    const idx = nodeConnections.findIndex(c => c.id === selectedConnectionId);
+    if (idx !== -1) {
+      nodeConnections.splice(idx, 1);
+      selectedConnectionId = null;
+      redrawNodeConnections();
+      updatePipelineFromConnections();
+      e.preventDefault();
+    }
+  }
+});
+
+function updatePipelineFromConnections() {
+  console.log('[NodeEditor] connections:', nodeConnections.map(c => `${c.fromNode} \u2192 ${c.toNode}`));
+  syncNodeEditor();
+}
+
+function initDefaultConnections() {
+  if (nodeConnections.length > 0) return;
+  const defaultFlow = [
+    { fromNode: 'mp4',      toNode: 'frame' },
+    { fromNode: 'frame',    toNode: 'refimage' },
+    { fromNode: 'refimage', toNode: 'prompt' },
+    { fromNode: 'prompt',   toNode: 'render' },
+    { fromNode: 'render',   toNode: 'upscale' }
+  ];
+  defaultFlow.forEach(c => nodeConnections.push({ ...c, id: Date.now() + Math.random() }));
+  redrawNodeConnections();
+}
+
+function makeNodeDraggable(nodeEl) {
+  const nodeId = nodeEl.dataset.node;
+  if (!nodeId || !nodeBasePositions[nodeId]) return;
+  let isDragging = false;
+  let startMouseX, startMouseY;
+  let startWorldX, startWorldY;
+  const titleBar = nodeEl.querySelector('.node-title-bar');
+  if (!titleBar) return;
+
+  titleBar.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    isDragging = true;
+    startMouseX = e.clientX;
+    startMouseY = e.clientY;
+    startWorldX = nodeBasePositions[nodeId].x;
+    startWorldY = nodeBasePositions[nodeId].y;
+    nodeEl.style.zIndex = '50';
+    nodeEl.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const s = nodeEditorState.scale;
+    const dx = (e.clientX - startMouseX) / s;
+    const dy = (e.clientY - startMouseY) / s;
+    nodeBasePositions[nodeId].x = startWorldX + dx;
+    nodeBasePositions[nodeId].y = startWorldY + dy;
+    const screen = worldToScreen(nodeBasePositions[nodeId].x, nodeBasePositions[nodeId].y);
+    nodeEl.style.left = screen.x + 'px';
+    nodeEl.style.top = screen.y + 'px';
+    redrawNodeConnections();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false;
+      nodeEl.style.zIndex = '10';
+      nodeEl.style.cursor = 'default';
+    }
+  });
+}
+
+function updateNodeMediaPreviews() {
+  if (pipelineState.mp4Path) {
+    const mp4Content = document.querySelector('.node-card[data-node="mp4"] .node-content');
+    if (mp4Content && !mp4Content.querySelector('input, textarea, button')) {
+      const safeUrl = `file:///${pipelineState.mp4Path.replace(/\\/g, '/')}`;
+      mp4Content.innerHTML = `
+        <div class="node-media-preview">
+          <video src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;" preload="metadata" muted playsinline></video>
+        </div>`;
+      const video = mp4Content.querySelector('video');
+      if (video) {
+        video.addEventListener('loadedmetadata', () => { try { video.currentTime = 0.1; } catch (e) {} });
+        video.addEventListener('mouseenter', () => { video.play().catch(() => {}); });
+        video.addEventListener('mouseleave', () => { video.pause(); try { video.currentTime = 0.1; } catch (e) {} });
+      }
+    }
+  }
+  if (pipelineState.referenceImage) {
+    const refContent = document.querySelector('.node-card[data-node="refimage"] .node-content');
+    if (refContent && !refContent.querySelector('input, textarea, button')) {
+      const safeUrl = `file:///${pipelineState.referenceImage.replace(/\\/g, '/')}`;
+      refContent.innerHTML = `<div class="node-media-preview"><img src="${safeUrl}" alt="Reference"></div>`;
+    }
+  }
+  if (pipelineState.aiResultUrl && !pipelineState.aiResultUrl.startsWith('mock://')) {
+    const resultContent = document.querySelector('.node-card[data-node="render"] .node-content');
+    if (resultContent && !resultContent.querySelector('input, textarea, button')) {
+      resultContent.innerHTML = `<div class="node-media-preview"><video src="${pipelineState.aiResultUrl}" autoplay loop muted></video></div>`;
+    }
+  }
+}
+
+function _nodeCardHTML(id, title, subtitle, hasIn, hasOut, defaultContent) {
+  return `
+    <div class="node-card node-inactive" data-node="${id}">
+      ${hasIn ? '<div class="node-port-in"></div>' : ''}
+      ${hasOut ? '<div class="node-port-out"></div>' : ''}
+      <div class="node-title-bar">
+        <span>${title}${subtitle ? ` <span class="node-subtitle">${subtitle}</span>` : ''}</span>
+        <span class="node-status-dot"></span>
+      </div>
+      <div class="node-body"><div class="node-content">${defaultContent || ''}</div></div>
+    </div>`;
+}
+
 function buildNodeEditor() {
   const nodePanelEl = document.getElementById('node-panel');
   if (!nodePanelEl) return;
-  nodePanelEl.innerHTML = `
-    <svg id="node-bezier" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <path data-conn="0" d="M 69 8 C 85 8, 15 24, 30 24"  stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
-      <path data-conn="1" d="M 69 24 C 85 24, 15 39, 30 39" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
-      <path data-conn="2" d="M 69 39 C 85 39, 15 54, 30 54" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
-      <path data-conn="3" d="M 69 54 C 85 54, 15 69, 30 69" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
-      <path data-conn="4" d="M 69 69 C 85 69, 15 84, 30 84" stroke="#333" stroke-width="0.5" fill="none" opacity="0.3"/>
-    </svg>
-    <div class="node-card node-active"   data-node="mp4"      style="top:5%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-out"></div>
-      <div class="node-header">MP4 Output</div>
-      <div class="node-content"><span style="font-size:9px;color:#555;">Waiting for recording…</span></div>
-    </div>
-    <div class="node-card node-inactive" data-node="frame"    style="top:20%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-in"></div>
-      <div class="node-port-out"></div>
-      <div class="node-header">Select Frame</div>
-      <div class="node-content"></div>
-    </div>
-    <div class="node-card node-inactive" data-node="refimage" style="top:35%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-in"></div>
-      <div class="node-port-out"></div>
-      <div class="node-header">Reference Image</div>
-      <div class="node-content"></div>
-    </div>
-    <div class="node-card node-inactive" data-node="prompt"   style="top:50%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-in"></div>
-      <div class="node-port-out"></div>
-      <div class="node-header">NanaBanana Prompt</div>
-      <div class="node-content"></div>
-    </div>
-    <div class="node-card node-inactive" data-node="render"   style="top:65%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-in"></div>
-      <div class="node-port-out"></div>
-      <div class="node-header">AI Render</div>
-      <div class="node-content"></div>
-    </div>
-    <div class="node-card node-inactive" data-node="upscale"  style="top:80%;left:calc(50% - 90px);">
-      <div class="node-status-dot"></div>
-      <div class="node-port-in"></div>
-      <div class="node-header">Upscale</div>
-      <div class="node-content"></div>
-    </div>`;
+
+  nodePanelEl.innerHTML =
+    _nodeCardHTML('mp4',      'MP4 Output',         'Step 1', false, true, '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
+    _nodeCardHTML('frame',    'Select Frame',       'Step 2', true,  true, '') +
+    _nodeCardHTML('refimage', 'Reference Image',    'Step 3', true,  true, '') +
+    _nodeCardHTML('prompt',   'Nanobanana Prompt',  'Step 4', true,  true, '') +
+    _nodeCardHTML('render',   'AI Render',          'Step 5', true,  true, '') +
+    _nodeCardHTML('upscale',  'Upscale',            'Step 6', true,  false, '');
+
+  // Grid canvas behind nodes
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.id = 'node-grid-canvas';
+  gridCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  nodePanelEl.insertBefore(gridCanvas, nodePanelEl.firstChild);
+
+  // SVG overlay for connections
+  const connectionsSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  connectionsSvg.id = 'node-connections-svg';
+  connectionsSvg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+  nodePanelEl.appendChild(connectionsSvg);
+
+  // Zoom controls
+  const nodeControls = document.createElement('div');
+  nodeControls.style.cssText = 'position:absolute;top:80px;right:16px;display:flex;flex-direction:column;gap:4px;z-index:999;pointer-events:all;';
+  nodeControls.innerHTML = `
+    <button class="node-ctrl-btn" id="node-zoom-in" title="Zoom In">+</button>
+    <button class="node-ctrl-btn" id="node-zoom-out" title="Zoom Out">&#8722;</button>
+    <button class="node-ctrl-btn" id="node-center" title="Center All Nodes">&#8857;</button>`;
+  nodePanelEl.appendChild(nodeControls);
+
+  document.getElementById('node-zoom-in').addEventListener('click', () => {
+    const rect = nodePanelEl.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const factor = 1.2;
+    const newScale = Math.min(nodeEditorState.maxScale, nodeEditorState.scale * factor);
+    const realFactor = newScale / nodeEditorState.scale;
+    nodeEditorState.offsetX = cx - realFactor * (cx - nodeEditorState.offsetX);
+    nodeEditorState.offsetY = cy - realFactor * (cy - nodeEditorState.offsetY);
+    nodeEditorState.scale = newScale;
+    updateNodePositions();
+  });
+  document.getElementById('node-zoom-out').addEventListener('click', () => {
+    const rect = nodePanelEl.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const factor = 0.8;
+    const newScale = Math.max(nodeEditorState.minScale, nodeEditorState.scale * factor);
+    const realFactor = newScale / nodeEditorState.scale;
+    nodeEditorState.offsetX = cx - realFactor * (cx - nodeEditorState.offsetX);
+    nodeEditorState.offsetY = cy - realFactor * (cy - nodeEditorState.offsetY);
+    nodeEditorState.scale = newScale;
+    updateNodePositions();
+  });
+  document.getElementById('node-center').addEventListener('click', () => {
+    nodeEditorState.offsetX = 0;
+    nodeEditorState.offsetY = 0;
+    nodeEditorState.scale = 1;
+    updateNodePositions();
+  });
+
+  // Pan: drag from empty panel space or grid canvas
+  nodePanelEl.addEventListener('mousedown', (e) => {
+    if (e.target !== nodePanelEl && e.target !== gridCanvas) return;
+    nodeEditorState.isDragging = true;
+    nodeEditorState.lastMouseX = e.clientX;
+    nodeEditorState.lastMouseY = e.clientY;
+    nodePanelEl.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!nodeEditorState.isDragging) return;
+    nodeEditorState.offsetX += e.clientX - nodeEditorState.lastMouseX;
+    nodeEditorState.offsetY += e.clientY - nodeEditorState.lastMouseY;
+    nodeEditorState.lastMouseX = e.clientX;
+    nodeEditorState.lastMouseY = e.clientY;
+    updateNodePositions();
+    drawNodeGrid();
+  });
+  window.addEventListener('mouseup', () => {
+    if (nodeEditorState.isDragging) {
+      nodeEditorState.isDragging = false;
+      nodePanelEl.style.cursor = 'default';
+    }
+  });
+
+  // Zoom toward mouse cursor — keep the world point under the cursor fixed
+  nodePanelEl.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.92 : 1.08;
+    const newScale = Math.min(
+      nodeEditorState.maxScale,
+      Math.max(nodeEditorState.minScale, nodeEditorState.scale * factor)
+    );
+    const rect = nodePanelEl.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const worldX = (mouseX - nodeEditorState.offsetX) / nodeEditorState.scale;
+    const worldY = (mouseY - nodeEditorState.offsetY) / nodeEditorState.scale;
+    nodeEditorState.scale = newScale;
+    nodeEditorState.offsetX = mouseX - worldX * newScale;
+    nodeEditorState.offsetY = mouseY - worldY * newScale;
+    updateNodePositions();
+  }, { passive: false });
+
+  // Make each node draggable by its title bar
+  document.querySelectorAll('.node-card').forEach(node => makeNodeDraggable(node));
+
   wireNodeInteractions();
+  updateNodePositions();
+  drawNodeGrid();
+  initNodePorts();
+  initDefaultConnections();
   syncNodeEditor();
 }
 
 buildNodeEditor();
+
+// Redraw grid + connections whenever the panel resizes (e.g. layout switch)
+window.addEventListener('resize', () => {
+  drawNodeGrid();
+  redrawNodeConnections();
+});
 

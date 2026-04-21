@@ -3,7 +3,7 @@
 // checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', imageUrl?, error? }>
 // cancel(jobId) → Promise<void>
 
-// Mock image adapter — simulates NanaBanana with a 3 second delay
+// Mock image adapter — simulates Nanobanana with a 3 second delay
 export const MockImageAdapter = {
   async generate(prompt, referenceImagePath) {
     console.log('[MockImageAdapter] generate called', { prompt, referenceImagePath });
