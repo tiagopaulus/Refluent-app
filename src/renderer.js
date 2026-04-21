@@ -98,7 +98,7 @@ container.appendChild(gizmoRenderer.domElement);
 
 const sunControlEl = document.createElement('div');
 sunControlEl.id = 'sun-btn';
-sunControlEl.style.cssText = 'position:absolute;top:60px;left:16px;width:64px;height:64px;z-index:100;cursor:crosshair;';
+sunControlEl.style.cssText = 'position:absolute;left:16px;top:108px;width:64px;height:64px;z-index:100;cursor:crosshair;';
 const sunPreviewCanvas = document.createElement('canvas');
 sunPreviewCanvas.id = 'sun-preview';
 sunPreviewCanvas.width = 64;
@@ -110,7 +110,7 @@ container.appendChild(sunControlEl);
 const sunResetEl = document.createElement('div');
 sunResetEl.id = 'sun-reset';
 sunResetEl.setAttribute('data-i18n', 'resetLight');
-sunResetEl.style.cssText = 'position:absolute;top:128px;left:16px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
+sunResetEl.style.cssText = 'position:absolute;left:16px;top:182px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
 container.appendChild(sunResetEl);
 
 const origin = new THREE.Vector3(0, 0, 0);
@@ -517,14 +517,18 @@ document.getElementById('reset-scale-btn').addEventListener('click', () => {
   updateTransformUI();
 });
 
-// Double-click rename
+// Double-click rename - UUID-safe (popup may outlive selection changes mid-edit)
 objectPopup.addEventListener('dblclick', (e) => {
   if (!e.target.classList || !e.target.classList.contains('object-popup-name')) return;
-  if (!selectedObject) return;
+  const editingUuid = objectPopup.dataset.uuid;
+  if (!editingUuid) return;
+  let editingObj = null;
+  scene.traverse(o => { if (o.uuid === editingUuid) editingObj = o; });
+  if (!editingObj) return;
   const nameEl = e.target;
   const input = document.createElement('input');
   input.type = 'text';
-  input.value = selectedObject.userData.name || '';
+  input.value = editingObj.userData.name || '';
   input.className = 'object-popup-name editing';
   input.style.cssText = 'width:100px;font-size:12px;';
   nameEl.replaceWith(input);
@@ -534,11 +538,15 @@ objectPopup.addEventListener('dblclick', (e) => {
   const restore = (newName) => {
     if (restored) return;
     restored = true;
-    if (newName !== null) {
-      selectedObject.userData.name = newName || selectedObject.userData.name;
+    let target = null;
+    scene.traverse(o => { if (o.uuid === editingUuid) target = o; });
+    if (target && newName !== null) {
+      const trimmed = (newName || '').trim();
+      target.userData.name = trimmed || target.userData.name;
     }
-    nameEl.textContent = selectedObject.userData.name;
+    nameEl.textContent = target ? target.userData.name : (newName || '');
     input.replaceWith(nameEl);
+    updateLayersPanel();
   };
   input.addEventListener('blur', () => restore(input.value));
   input.addEventListener('keydown', (ev) => {
@@ -550,8 +558,9 @@ objectPopup.addEventListener('dblclick', (e) => {
 function showObjectPopup(obj) {
   if (!obj) return;
   objectPopup.classList.remove('hidden');
-  document.getElementById('popup-name').textContent =
-    obj.userData.name || obj.userData.modelName || 'Object';
+  objectPopup.dataset.uuid = obj.uuid;
+  const nameEl = document.getElementById('popup-name');
+  if (nameEl) nameEl.textContent = obj.userData.name || obj.userData.modelName || 'Object';
   // Delta-mode: sliders open centered; mousedown captures the live base value
   popupSliders.forEach(s => { s.value = 0; });
   updatePopupPosition();
@@ -583,11 +592,156 @@ function updatePopupPosition() {
 
 _popupReady = true;
 
+// ---- Mission F: Layers panel ----
+function _layersI18n(key) {
+  const lang = localStorage.getItem('refluent_lang') || 'en';
+  const strs = {
+    layers:    { en: 'Layers',             kr: '레이어' },
+    noObjects: { en: 'No objects in scene', kr: '씬에 오브젝트 없음' }
+  };
+  return (strs[key] && strs[key][lang]) || strs[key].en;
+}
+
+function _clearObjectHighlight(obj) {
+  if (!obj) return;
+  obj.traverse(child => {
+    if (child.isMesh && child.material && child.userData.originalEmissive !== undefined) {
+      child.material.emissive.setHex(child.userData.originalEmissive);
+    }
+  });
+}
+
+function _applyObjectHighlight(obj) {
+  if (!obj) return;
+  obj.traverse(child => {
+    if (child.isMesh && child.material) {
+      if (child.userData.originalEmissive === undefined) {
+        child.userData.originalEmissive = child.material.emissive ? child.material.emissive.getHex() : 0x000000;
+      }
+      child.material.emissive.setHex(0x555555);
+    }
+  });
+}
+
+function selectObject(obj) {
+  if (selectedObject && selectedObject !== obj) _clearObjectHighlight(selectedObject);
+  selectedObject = obj;
+  if (obj) {
+    _applyObjectHighlight(obj);
+    updateTransformUI();
+  }
+}
+
+const layersPanel = document.createElement('div');
+layersPanel.id = 'layers-panel';
+layersPanel.innerHTML = `
+  <div id="layers-header">${_layersI18n('layers')}</div>
+  <div id="layers-list">
+    <div id="layers-empty">${_layersI18n('noObjects')}</div>
+  </div>`;
+document.getElementById('viewport').appendChild(layersPanel);
+layersPanel.style.top = '206px';
+
+function updateLayersPanel() {
+  const list = document.getElementById('layers-list');
+  document.getElementById('layers-header').textContent = _layersI18n('layers');
+  const sceneObjects = scene.children.filter(c => c.userData && c.userData.isUserObject);
+
+  if (sceneObjects.length === 0) {
+    list.innerHTML = `<div id="layers-empty">${_layersI18n('noObjects')}</div>`;
+    return;
+  }
+
+  list.innerHTML = '';
+  sceneObjects.forEach(obj => {
+    const item = document.createElement('div');
+    item.className = 'layer-item' + (obj === selectedObject ? ' selected' : '');
+    item.dataset.uuid = obj.uuid;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'layer-item-name';
+    nameSpan.textContent = obj.userData.name || 'Object';
+    const delBtn = document.createElement('button');
+    delBtn.className = 'layer-item-delete';
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = '&#128465;';
+    item.appendChild(nameSpan);
+    item.appendChild(delBtn);
+
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('layer-item-delete')) return;
+      if (e.target.classList.contains('layer-item-name')) return;
+      selectObject(obj);
+      showObjectPopup(obj);
+      updateLayersPanel();
+    });
+
+    nameSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = obj.userData.name || 'Object';
+      input.style.cssText = 'width:120px;background:#1a1a1a;border:1px solid #555;border-radius:3px;color:#fff;font-size:11px;padding:1px 4px;outline:none;';
+      nameSpan.replaceWith(input);
+      input.focus();
+      input.select();
+
+      let done = false;
+      const confirmRename = () => {
+        if (done) return;
+        done = true;
+        const newName = input.value.trim();
+        if (newName) {
+          scene.traverse(sceneObj => {
+            if (sceneObj.uuid === obj.uuid) {
+              sceneObj.userData.name = newName;
+            }
+          });
+          const popup = document.getElementById('object-popup');
+          if (popup && popup.dataset.uuid === obj.uuid) {
+            const popupName = document.getElementById('popup-name');
+            if (popupName) popupName.textContent = newName;
+          }
+        }
+        updateLayersPanel();
+      };
+
+      input.addEventListener('blur', confirmRename);
+      input.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); confirmRename(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); done = true; updateLayersPanel(); }
+      });
+    });
+
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      scene.remove(obj);
+      if (selectedObject === obj) {
+        selectedObject = null;
+        hideObjectPopup();
+      }
+      updateLayersPanel();
+    });
+
+    list.appendChild(item);
+  });
+}
+
+updateLayersPanel();
+
 
 let isSKeyDown = false;
 let isGKeyDown = false;
 let isTKeyDown = false;
+
+function _isTypingTarget() {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  const tag = ae.tagName ? ae.tagName.toLowerCase() : '';
+  return tag === 'input' || tag === 'textarea' || ae.isContentEditable;
+}
+
 window.addEventListener('keydown', (e) => {
+  if (_isTypingTarget()) return;
   if (e.key.toLowerCase() === 's') {
     isSKeyDown = true;
     controls.enableZoom = false;
@@ -602,6 +756,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (_isTypingTarget()) return;
   if (e.key.toLowerCase() === 's') {
     isSKeyDown = false;
     if (!isGKeyDown && !isTKeyDown) controls.enableZoom = true;
@@ -660,10 +815,12 @@ const deleteSelection = () => {
     selectedObject = null;
     scalePanel.classList.add('hidden');
     hideObjectPopup();
+    updateLayersPanel();
   }
 };
 
 window.addEventListener('keyup', (e) => {
+  if (_isTypingTarget()) return;
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (!isSettingTarget) deleteSelection();
   }
@@ -678,6 +835,7 @@ document.getElementById('clear-scene-btn').addEventListener('click', () => {
       scalePanel.classList.add('hidden');
       hideObjectPopup();
     }
+    updateLayersPanel();
   }
 });
 
@@ -766,8 +924,10 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
         updateTransformUI();
         showObjectPopup(selectedObject);
       }
+      updateLayersPanel();
     } else {
       hideObjectPopup();
+      updateLayersPanel();
     }
   }
 });
@@ -782,6 +942,7 @@ document.getElementById('add-box-btn').addEventListener('click', () => {
   boxCount++;
   mesh.userData.name = "Box" + boxCount;
   scene.add(mesh);
+  updateLayersPanel();
 });
 
 document.getElementById('add-sphere-btn').addEventListener('click', () => {
@@ -795,6 +956,7 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
   sphereCount++;
   mesh.userData.name = "Sphere" + sphereCount;
   scene.add(mesh);
+  updateLayersPanel();
 });
 
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -840,6 +1002,7 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
       ? nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)
       : 'Model';
     scene.add(wrapper);
+    updateLayersPanel();
     loadingOverlay.classList.add('hidden');
   };
 
@@ -1386,7 +1549,7 @@ document.getElementById('viewport').appendChild(vignetteEl);
 
 const lensHudEl = document.createElement('div');
 lensHudEl.id = 'lens-hud';
-lensHudEl.style.cssText = 'position:absolute;top:145px;left:16px;font-size:11px;color:rgba(255,255,255,0.5);pointer-events:none;z-index:20;font-family:monospace;';
+lensHudEl.style.cssText = 'position:absolute;top:80px;left:16px;font-size:11px;color:rgba(255,255,255,0.35);pointer-events:none;z-index:20;font-family:monospace;letter-spacing:1px;';
 lensHudEl.innerText = 'Zeiss Milvus 35mm';
 document.getElementById('viewport').appendChild(lensHudEl);
 

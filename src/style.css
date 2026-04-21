@@ -756,3 +756,68 @@ button:active {
   height: 4px;
   accent-color: #888;
 }
+
+/* Mission F - Layers panel */
+#layers-panel {
+  position: absolute;
+  left: 16px;
+  top: 168px;
+  width: 180px;
+  max-height: calc(100vh - 240px);
+  overflow-y: auto;
+  background: rgba(15,15,15,0.92);
+  border: 1px solid #222;
+  border-radius: 6px;
+  z-index: 100;
+  font-size: 11px;
+  color: #ccc;
+}
+#layers-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #555;
+  letter-spacing: 1px;
+  border-bottom: 1px solid #1a1a1a;
+  text-transform: uppercase;
+}
+.layer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #1a1a1a;
+  transition: background 0.15s;
+}
+.layer-item:hover {
+  background: #1a1a1a;
+}
+.layer-item.selected {
+  background: #1e1e2e;
+  color: #fff;
+}
+.layer-item-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.layer-item-delete {
+  background: none;
+  border: none;
+  color: #444;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.layer-item-delete:hover {
+  color: #cc4444;
+}
+#layers-empty {
+  padding: 10px;
+  font-size: 10px;
+  color: #333;
+  text-align: center;
+}
