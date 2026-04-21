@@ -1118,7 +1118,7 @@ sunReset.addEventListener('click', () => {
 // ---- Vignette + Lens HUD ----
 const vignetteEl = document.createElement('div');
 vignetteEl.id = 'vignette-overlay';
-vignetteEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;border-radius:0;background:radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,1) 100%);opacity:0.10;';
+vignetteEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;border-radius:0;background:radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,1) 100%);opacity:0;';
 document.getElementById('viewport').appendChild(vignetteEl);
 
 const lensHudEl = document.createElement('div');
@@ -1135,7 +1135,6 @@ lensSelect.addEventListener('change', () => {
   camera.near = lens.near;
   camera.far = lens.far;
   camera.updateProjectionMatrix();
-  document.getElementById('vignette-overlay').style.opacity = lens.vignette;
   document.getElementById('lens-hud').innerText = lens.name;
 });
 
