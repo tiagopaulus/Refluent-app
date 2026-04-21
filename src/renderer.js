@@ -2198,7 +2198,6 @@ function _clearSceneSilently() {
 }
 
 async function saveScene(saveAs = false) {
-  // Force a render so the captured frame is current
   renderer.render(scene, camera);
   const thumbnail = renderer.domElement.toDataURL('image/jpeg', 0.6);
 
@@ -2212,9 +2211,7 @@ async function saveScene(saveAs = false) {
       scale: obj.scale.toArray(),
       rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z]
     };
-    if (obj.material && obj.material.color) {
-      entry.color = obj.material.color.getHexString();
-    }
+    if (obj.material && obj.material.color) entry.color = obj.material.color.getHexString();
     if (obj.userData.modelData) {
       entry.modelData = obj.userData.modelData;
       entry.modelFormat = obj.userData.modelFormat;
@@ -2222,29 +2219,67 @@ async function saveScene(saveAs = false) {
     objects.push(entry);
   });
 
+  const lensSel = document.getElementById('lens-select');
+  const camDirChecked = document.querySelector('input[name="camDir"]:checked');
+
   const sceneData = {
-    version: '1.0',
+    version: '1.1',
     name: currentSceneName || 'Untitled',
     savedAt: new Date().toISOString(),
     thumbnail,
+
     camera: {
       position: camera.position.toArray(),
       target: controls.target.toArray(),
-      fov: camera.fov
+      fov: camera.fov,
+      near: camera.near,
+      far: camera.far
     },
+
     lens: {
-      name: (function () {
-        const sel = document.getElementById('lens-select');
-        if (!sel) return 'Zeiss Milvus 35mm';
-        const opt = sel.options[sel.selectedIndex];
-        return opt ? opt.text : 'Zeiss Milvus 35mm';
-      })(),
-      mm: parseInt(document.getElementById('lens-mm-input')?.value || '35', 10)
+      templateIndex: lensSel ? lensSel.value : '3',
+      templateName: lensSel ? lensSel.options[lensSel.selectedIndex]?.text : 'Zeiss Milvus 35mm',
+      mm: parseInt(document.getElementById('lens-mm-input')?.value || '35', 10),
+      targetFov: targetFov
     },
-    objects,
+
+    cameraMovement: {
+      preset: currentCamType,
+      speed: camSpeedSlider ? camSpeedSlider.value : '1',
+      duration: camDurSlider ? camDurSlider.value : '5',
+      direction: camDirChecked ? camDirChecked.value : '1',
+      lockToTarget: camLockTarget ? camLockTarget.checked : false
+    },
+
     lighting: {
       dirLightPosition: dirLight.position.toArray(),
-      fillLightIntensity: 0.3
+      dirLightIntensity: dirLight.intensity,
+      fillLightPosition: fillLight ? fillLight.position.toArray() : [0, 0, 0],
+      fillLightIntensity: fillLight ? fillLight.intensity : 0.3
+    },
+
+    objects,
+
+    layout: {
+      mode: localStorage.getItem('layout_mode') || 'simple',
+      simpleModeState: { ...simpleModeState },
+      nodeEditorState: { ...nodeEditorState },
+      stepWorldPositions: JSON.parse(JSON.stringify(stepWorldPositions)),
+      nodeBasePositions: JSON.parse(JSON.stringify(nodeBasePositions)),
+      skippedSteps: Array.from(document.querySelectorAll('.step-card.skipped'))
+        .map(c => c.dataset.stepKey || c.dataset.step),
+      nodeConnections: nodeConnections.map(c => ({ fromNode: c.fromNode, toNode: c.toNode, id: c.id }))
+    },
+
+    pipeline: {
+      currentStep: pipelineState.currentStep,
+      mp4Path: pipelineState.mp4Path,
+      mp4Filename: pipelineState.mp4Filename,
+      referenceFrame: pipelineState.referenceFrame,
+      referenceImage: pipelineState.referenceImage,
+      prompt: pipelineState.prompt,
+      aiResultUrl: pipelineState.aiResultUrl,
+      upscaleUrl: pipelineState.upscaleUrl
     }
   };
 
@@ -2262,7 +2297,7 @@ async function saveScene(saveAs = false) {
     updateWindowTitle();
     addToRecentScenes(savePath, sceneData.name, thumbnail);
     sceneModifiedSinceLastSave = false;
-    showToast('Scene saved');
+    showToast(`Scene saved \u2014 ${sceneData.name}.ent`);
   } catch (err) {
     showToast('Save failed: ' + err.message);
   }
@@ -2296,20 +2331,73 @@ async function loadScene(filePath) {
 
   _clearSceneSilently();
 
+  // ---- Camera ----
   if (data.camera) {
     camera.position.fromArray(data.camera.position);
     controls.target.fromArray(data.camera.target);
     camera.fov = data.camera.fov;
+    camera.near = data.camera.near != null ? data.camera.near : 0.1;
+    camera.far = data.camera.far != null ? data.camera.far : 10000;
     camera.updateProjectionMatrix();
     targetFov = data.camera.fov;
     controls.update();
   }
 
+  // ---- Lens ----
   if (data.lens) {
+    const lensSelect = document.getElementById('lens-select');
+    if (lensSelect && data.lens.templateIndex != null) lensSelect.value = data.lens.templateIndex;
     const mmInput = document.getElementById('lens-mm-input');
-    if (mmInput) mmInput.value = data.lens.mm;
+    if (mmInput && data.lens.mm != null) mmInput.value = data.lens.mm;
+    if (data.lens.targetFov != null) {
+      targetFov = data.lens.targetFov;
+      camera.fov = targetFov;
+      camera.updateProjectionMatrix();
+    }
+    const lensHud = document.getElementById('lens-hud');
+    if (lensHud && data.lens.templateIndex != null) {
+      const lens = LENS_TEMPLATES[parseInt(data.lens.templateIndex, 10)];
+      if (lens) lensHud.innerText = `${getLensBaseName(lens.name)} \u2014 ${data.lens.mm}mm`;
+    }
   }
 
+  // ---- Camera movement ----
+  if (data.cameraMovement) {
+    const cm = data.cameraMovement;
+    const preset = cm.preset || 'pushIn';
+    currentCamType = preset;
+    const radio = document.querySelector(`input[name="camType"][value="${preset}"]`);
+    if (radio) {
+      radio.checked = true;
+      radio.dispatchEvent(new Event('change'));
+    }
+    if (camSpeedSlider && cm.speed != null) {
+      camSpeedSlider.value = cm.speed;
+      if (camSpeedVal) camSpeedVal.innerText = parseFloat(cm.speed).toFixed(1);
+    }
+    if (camDurSlider && cm.duration != null) {
+      camDurSlider.value = cm.duration;
+      if (camDurVal) camDurVal.innerText = cm.duration;
+    }
+    if (cm.direction != null) {
+      const dirRadio = document.querySelector(`input[name="camDir"][value="${cm.direction}"]`);
+      if (dirRadio) dirRadio.checked = true;
+    }
+    if (camLockTarget && cm.lockToTarget != null) camLockTarget.checked = !!cm.lockToTarget;
+  }
+
+  // ---- Lighting ----
+  if (data.lighting) {
+    if (data.lighting.dirLightPosition) {
+      dirLight.position.fromArray(data.lighting.dirLightPosition);
+      dirLight.target.updateMatrixWorld();
+    }
+    if (data.lighting.dirLightIntensity != null) dirLight.intensity = data.lighting.dirLightIntensity;
+    if (fillLight && data.lighting.fillLightPosition) fillLight.position.fromArray(data.lighting.fillLightPosition);
+    if (fillLight && data.lighting.fillLightIntensity != null) fillLight.intensity = data.lighting.fillLightIntensity;
+  }
+
+  // ---- Objects ----
   for (const obj of (data.objects || [])) {
     let mesh = null;
     if (obj.type === 'box') {
@@ -2333,7 +2421,7 @@ async function loadScene(filePath) {
         wrapper.userData.modelFormat = obj.modelFormat;
         mesh = wrapper;
       } catch (err) {
-        console.warn('[Mission H] Failed to restore imported model', obj.name, err);
+        console.warn('[loadScene] Failed to restore imported model', obj.name, err);
         continue;
       }
     } else {
@@ -2345,24 +2433,76 @@ async function loadScene(filePath) {
     if (Array.isArray(obj.position)) mesh.position.fromArray(obj.position);
     if (Array.isArray(obj.scale)) mesh.scale.fromArray(obj.scale);
     if (Array.isArray(obj.rotation)) mesh.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
-    if (obj.color && mesh.material && mesh.material.color) {
-      mesh.material.color.set('#' + obj.color);
-    }
+    if (obj.color && mesh.material && mesh.material.color) mesh.material.color.set('#' + obj.color);
     scene.add(mesh);
   }
 
-  if (data.lighting && data.lighting.dirLightPosition) {
-    dirLight.position.fromArray(data.lighting.dirLightPosition);
-    dirLight.target.updateMatrixWorld();
+  // ---- Layout ----
+  if (data.layout) {
+    const l = data.layout;
+    if (l.mode) setLayout(l.mode);
+    if (l.simpleModeState) Object.assign(simpleModeState, l.simpleModeState);
+    if (l.nodeEditorState) Object.assign(nodeEditorState, l.nodeEditorState);
+    if (l.stepWorldPositions) Object.assign(stepWorldPositions, l.stepWorldPositions);
+    if (l.nodeBasePositions) Object.assign(nodeBasePositions, l.nodeBasePositions);
+
+    // Reset all skipped state, then re-apply saved
+    document.querySelectorAll('.step-card.skipped').forEach(c => {
+      c.classList.remove('skipped');
+      const b = c.querySelector('.step-skip-btn');
+      if (b) b.textContent = 'Skip';
+    });
+    if (Array.isArray(l.skippedSteps)) {
+      l.skippedSteps.forEach(stepKey => {
+        const card = document.querySelector(`.step-card[data-step-key="${stepKey}"]`)
+          || document.querySelector(`.step-card[data-step="${stepKey}"]`);
+        if (card) {
+          card.classList.add('skipped');
+          const btn = card.querySelector('.step-skip-btn');
+          if (btn) btn.textContent = 'Include';
+        }
+      });
+    }
+
+    if (Array.isArray(l.nodeConnections)) {
+      nodeConnections.length = 0;
+      l.nodeConnections.forEach(c => nodeConnections.push({ ...c }));
+    }
+
+    updateNodePositions();
+    updateStepPositions();
+    redrawNodeConnections();
+    drawSimpleConnections();
+  }
+
+  // ---- Pipeline ----
+  if (data.pipeline) {
+    const p = data.pipeline;
+    Object.assign(pipelineState, p);
+    activateStep(p.currentStep || 0);
+    updateStepMediaPreviews();
+    if (typeof updateNodeMediaPreviews === 'function') updateNodeMediaPreviews();
+
+    if (p.prompt) {
+      const promptStepContent = document.querySelector('.step-card[data-step-key="prompt"] .step-content');
+      if (promptStepContent && !promptStepContent.querySelector('input, textarea, button')) {
+        promptStepContent.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${p.prompt}</div>`;
+      }
+      const promptNodeContent = document.querySelector('.node-card[data-node="prompt"] .node-content');
+      if (promptNodeContent && !promptNodeContent.querySelector('input, textarea, button')) {
+        promptNodeContent.innerHTML = `<span style="font-size:9px;color:#aaa;">${p.prompt}</span>`;
+      }
+    }
   }
 
   currentScenePath = filePath;
   currentSceneName = data.name || filePath.split(/[\\/]/).pop().replace(/\.ent$/i, '');
   updateWindowTitle();
   updateLayersPanel();
+  syncNodeEditor();
   addToRecentScenes(filePath, currentSceneName, data.thumbnail);
   sceneModifiedSinceLastSave = false;
-  showToast('Scene loaded');
+  showToast(`Scene loaded \u2014 ${currentSceneName}.ent`);
 }
 
 async function newScene() {
