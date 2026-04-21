@@ -9,5 +9,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onFileSelected: (callback) => ipcRenderer.on('file-selected', (event, path) => callback(path)),
   selectMp4Folder: () => ipcRenderer.invoke('select-mp4-folder'),
   onMp4FolderChanged: (callback) => ipcRenderer.on('mp4-folder-changed', (event, folder) => callback(folder)),
-  onOpenPreferences: (callback) => ipcRenderer.on('open-preferences', () => callback())
+  onOpenPreferences: (callback) => ipcRenderer.on('open-preferences', () => callback()),
+  // Mission H - scene save/load
+  saveSceneDialog: (name) => ipcRenderer.invoke('save-scene-dialog', name),
+  openSceneDialog: () => ipcRenderer.invoke('open-scene-dialog'),
+  writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
+  readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
+  readFileBase64: (filePath) => ipcRenderer.invoke('read-file-base64', filePath),
+  onNewScene: (callback) => ipcRenderer.on('new-scene', () => callback()),
+  onOpenScene: (callback) => ipcRenderer.on('open-scene', () => callback()),
+  onSaveScene: (callback) => ipcRenderer.on('save-scene', () => callback()),
+  onSaveSceneAs: (callback) => ipcRenderer.on('save-scene-as', () => callback())
 });

@@ -939,6 +939,7 @@ document.getElementById('add-box-btn').addEventListener('click', () => {
   mesh.position.y = 0.5;
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Box";
+  mesh.userData.type = "box";
   boxCount++;
   mesh.userData.name = "Box" + boxCount;
   scene.add(mesh);
@@ -953,6 +954,7 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
   mesh.position.x = 2;
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Sphere";
+  mesh.userData.type = "sphere";
   sphereCount++;
   mesh.userData.name = "Sphere" + sphereCount;
   scene.add(mesh);
@@ -965,16 +967,24 @@ const loadingText = document.getElementById('loading-text');
 document.getElementById('import-model-btn').addEventListener('click', async () => {
   const filePath = await window.electronAPI.openModel();
   if (!filePath) return;
-  
+
   loadingOverlay.classList.remove('hidden');
   loadingText.innerText = getTranslation('loadingModel');
 
   const ext = filePath.split('.').pop().toLowerCase();
-  
+
   const fileUrl = encodeURI(`file:///${filePath.replace(/\\/g, '/')}`);
-  
+
   const fileName = filePath.split('\\').pop().split('/').pop();
   const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+
+  // Mission H - capture file as base64 for scene save embedding
+  let modelDataB64 = null;
+  try {
+    modelDataB64 = await window.electronAPI.readFileBase64(filePath);
+  } catch (err) {
+    console.warn('[Mission H] Could not read model file as base64:', err);
+  }
 
   const onLoad = (object) => {
     const root = object.scene || object;
@@ -998,6 +1008,11 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
     
     wrapper.userData.isUserObject = true;
     wrapper.userData.modelName = nameWithoutExt;
+    wrapper.userData.type = 'imported';
+    if (modelDataB64) {
+      wrapper.userData.modelData = modelDataB64;
+      wrapper.userData.modelFormat = ext;
+    }
     wrapper.userData.name = nameWithoutExt
       ? nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)
       : 'Model';
@@ -2043,6 +2058,321 @@ window.addEventListener('keydown', (e) => {
     showPreferences();
   }
 });
+
+// ---- Mission H: Scene save/load + recent projects ----
+let currentSceneName = null;
+let currentScenePath = null;
+
+function updateWindowTitle() {
+  const name = currentSceneName || 'Untitled';
+  document.title = `${name} \u2014 Refluent`;
+}
+updateWindowTitle();
+
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:8px 16px;z-index:4000;pointer-events:none;opacity:1;transition:opacity 0.5s;';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 2000);
+}
+
+function addToRecentScenes(filePath, name, thumbnail) {
+  let recents = [];
+  try { recents = JSON.parse(localStorage.getItem('recent_scenes') || '[]'); } catch (e) {}
+  recents = recents.filter(r => r.path !== filePath);
+  recents.unshift({ path: filePath, name, thumbnail, date: new Date().toISOString() });
+  recents = recents.slice(0, 8);
+  try { localStorage.setItem('recent_scenes', JSON.stringify(recents)); } catch (e) {
+    // Thumbnails may push us over the localStorage quota; drop them and retry once
+    const stripped = recents.map(r => ({ ...r, thumbnail: null }));
+    try { localStorage.setItem('recent_scenes', JSON.stringify(stripped)); } catch (e2) {}
+  }
+}
+
+function _clearSceneSilently() {
+  const toRemove = scene.children.filter(c => c.userData && c.userData.isUserObject);
+  toRemove.forEach(obj => scene.remove(obj));
+  if (selectedObject) {
+    selectedObject = null;
+    hideObjectPopup();
+  }
+  boxCount = 0;
+  sphereCount = 0;
+  updateLayersPanel();
+}
+
+async function saveScene(saveAs = false) {
+  // Force a render so the captured frame is current
+  renderer.render(scene, camera);
+  const thumbnail = renderer.domElement.toDataURL('image/jpeg', 0.6);
+
+  const objects = [];
+  scene.children.filter(c => c.userData && c.userData.isUserObject).forEach(obj => {
+    const entry = {
+      uuid: obj.uuid,
+      name: obj.userData.name || 'Object',
+      type: obj.userData.type || 'box',
+      position: obj.position.toArray(),
+      scale: obj.scale.toArray(),
+      rotation: [obj.rotation.x, obj.rotation.y, obj.rotation.z]
+    };
+    if (obj.material && obj.material.color) {
+      entry.color = obj.material.color.getHexString();
+    }
+    if (obj.userData.modelData) {
+      entry.modelData = obj.userData.modelData;
+      entry.modelFormat = obj.userData.modelFormat;
+    }
+    objects.push(entry);
+  });
+
+  const sceneData = {
+    version: '1.0',
+    name: currentSceneName || 'Untitled',
+    savedAt: new Date().toISOString(),
+    thumbnail,
+    camera: {
+      position: camera.position.toArray(),
+      target: controls.target.toArray(),
+      fov: camera.fov
+    },
+    lens: {
+      name: (function () {
+        const sel = document.getElementById('lens-select');
+        if (!sel) return 'Zeiss Milvus 35mm';
+        const opt = sel.options[sel.selectedIndex];
+        return opt ? opt.text : 'Zeiss Milvus 35mm';
+      })(),
+      mm: parseInt(document.getElementById('lens-mm-input')?.value || '35', 10)
+    },
+    objects,
+    lighting: {
+      dirLightPosition: dirLight.position.toArray(),
+      fillLightIntensity: 0.3
+    }
+  };
+
+  let savePath = currentScenePath;
+  if (saveAs || !savePath) {
+    savePath = await window.electronAPI.saveSceneDialog(currentSceneName || 'Untitled');
+    if (!savePath) return;
+    currentScenePath = savePath;
+    currentSceneName = savePath.split(/[\\/]/).pop().replace(/\.ent$/i, '');
+    sceneData.name = currentSceneName;
+  }
+
+  try {
+    await window.electronAPI.writeFile(savePath, JSON.stringify(sceneData, null, 2));
+    updateWindowTitle();
+    addToRecentScenes(savePath, sceneData.name, thumbnail);
+    showToast('Scene saved');
+  } catch (err) {
+    showToast('Save failed: ' + err.message);
+  }
+}
+
+async function _loadModelFromBase64(base64, format) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Promise((resolve, reject) => {
+    if (format === 'glb' || format === 'gltf') {
+      const loader = new GLTFLoader();
+      loader.parse(bytes.buffer, '', (gltf) => resolve(gltf.scene || gltf), reject);
+    } else if (format === 'obj') {
+      const loader = new OBJLoader();
+      try { resolve(loader.parse(new TextDecoder().decode(bytes))); }
+      catch (e) { reject(e); }
+    } else {
+      reject(new Error('Unsupported model format: ' + format));
+    }
+  });
+}
+
+async function loadScene(filePath) {
+  let json;
+  try { json = await window.electronAPI.readFile(filePath); }
+  catch (err) { showToast('Open failed: ' + err.message); return; }
+  let data;
+  try { data = JSON.parse(json); }
+  catch (err) { showToast('Invalid .ent file'); return; }
+
+  _clearSceneSilently();
+
+  if (data.camera) {
+    camera.position.fromArray(data.camera.position);
+    controls.target.fromArray(data.camera.target);
+    camera.fov = data.camera.fov;
+    camera.updateProjectionMatrix();
+    targetFov = data.camera.fov;
+    controls.update();
+  }
+
+  if (data.lens) {
+    const mmInput = document.getElementById('lens-mm-input');
+    if (mmInput) mmInput.value = data.lens.mm;
+  }
+
+  for (const obj of (data.objects || [])) {
+    let mesh = null;
+    if (obj.type === 'box') {
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshStandardMaterial({ color: 0x007bff, roughness: 0.4 });
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.userData.modelName = 'Box';
+      boxCount++;
+    } else if (obj.type === 'sphere') {
+      const geometry = new THREE.SphereGeometry(0.6, 32, 32);
+      const material = new THREE.MeshStandardMaterial({ color: 0xff3366, roughness: 0.4 });
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.userData.modelName = 'Sphere';
+      sphereCount++;
+    } else if (obj.type === 'imported' && obj.modelData) {
+      try {
+        const root = await _loadModelFromBase64(obj.modelData, obj.modelFormat);
+        const wrapper = new THREE.Group();
+        wrapper.add(root);
+        wrapper.userData.modelData = obj.modelData;
+        wrapper.userData.modelFormat = obj.modelFormat;
+        mesh = wrapper;
+      } catch (err) {
+        console.warn('[Mission H] Failed to restore imported model', obj.name, err);
+        continue;
+      }
+    } else {
+      continue;
+    }
+    mesh.userData.isUserObject = true;
+    mesh.userData.type = obj.type;
+    mesh.userData.name = obj.name;
+    if (Array.isArray(obj.position)) mesh.position.fromArray(obj.position);
+    if (Array.isArray(obj.scale)) mesh.scale.fromArray(obj.scale);
+    if (Array.isArray(obj.rotation)) mesh.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
+    if (obj.color && mesh.material && mesh.material.color) {
+      mesh.material.color.set('#' + obj.color);
+    }
+    scene.add(mesh);
+  }
+
+  if (data.lighting && data.lighting.dirLightPosition) {
+    dirLight.position.fromArray(data.lighting.dirLightPosition);
+    dirLight.target.updateMatrixWorld();
+  }
+
+  currentScenePath = filePath;
+  currentSceneName = data.name || filePath.split(/[\\/]/).pop().replace(/\.ent$/i, '');
+  updateWindowTitle();
+  updateLayersPanel();
+  addToRecentScenes(filePath, currentSceneName, data.thumbnail);
+  showToast('Scene loaded');
+}
+
+async function newScene() {
+  _clearSceneSilently();
+  currentScenePath = null;
+  currentSceneName = null;
+  updateWindowTitle();
+}
+
+async function openSceneFromDialog() {
+  const path = await window.electronAPI.openSceneDialog();
+  if (path) await loadScene(path);
+}
+
+function showRecentProjects() {
+  let recents = [];
+  try { recents = JSON.parse(localStorage.getItem('recent_scenes') || '[]'); } catch (e) {}
+  if (recents.length === 0) return;
+
+  if (document.getElementById('recent-overlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'recent-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.92);z-index:2000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:24px;';
+
+  const grid = recents.map(r => `
+    <div class="recent-card" data-path="${encodeURIComponent(r.path)}">
+      <div class="recent-thumb">
+        ${r.thumbnail
+          ? `<img src="${r.thumbnail}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;">`
+          : `<div style="width:100%;height:100%;background:#1a1a1a;border-radius:4px;"></div>`}
+      </div>
+      <div class="recent-name">${r.name}</div>
+      <div class="recent-date">${new Date(r.date).toLocaleDateString()}</div>
+    </div>`).join('');
+
+  overlay.innerHTML = `
+    <div style="text-align:center;">
+      <div style="font-size:24px;font-weight:300;color:#fff;letter-spacing:4px;">REFLUENT</div>
+      <div style="font-size:11px;color:#444;margin-top:4px;letter-spacing:2px;">RECENT PROJECTS</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;max-width:800px;">
+      ${grid}
+    </div>
+    <div style="display:flex;gap:12px;">
+      <button id="new-scene-btn" style="background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#fff;font-size:12px;padding:10px 24px;cursor:pointer;">+ New Scene</button>
+      <button id="open-scene-btn" style="background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#aaa;font-size:12px;padding:10px 24px;cursor:pointer;">Open File...</button>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  if (!document.getElementById('recent-style')) {
+    const style = document.createElement('style');
+    style.id = 'recent-style';
+    style.textContent = `
+      .recent-card {
+        width: 180px; cursor: pointer; border-radius: 6px;
+        border: 1px solid #222; padding: 8px;
+        background: #111; transition: border-color 0.2s;
+      }
+      .recent-card:hover { border-color: #555; }
+      .recent-thumb { width:100%; height:100px; margin-bottom:8px; }
+      .recent-name { font-size:12px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .recent-date { font-size:10px; color:#444; margin-top:2px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  overlay.querySelectorAll('.recent-card').forEach(card => {
+    card.addEventListener('click', async () => {
+      const filePath = decodeURIComponent(card.dataset.path);
+      overlay.remove();
+      await loadScene(filePath);
+    });
+  });
+
+  document.getElementById('new-scene-btn').addEventListener('click', () => overlay.remove());
+  document.getElementById('open-scene-btn').addEventListener('click', async () => {
+    overlay.remove();
+    await openSceneFromDialog();
+  });
+}
+
+window.electronAPI.onNewScene(() => newScene());
+window.electronAPI.onOpenScene(() => openSceneFromDialog());
+window.electronAPI.onSaveScene(() => saveScene(false));
+window.electronAPI.onSaveSceneAs(() => saveScene(true));
+
+window.addEventListener('keydown', (e) => {
+  if (_isTypingTarget()) return;
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+    e.preventDefault();
+    saveScene(true);
+  } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    saveScene(false);
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'o' || e.key === 'O')) {
+    e.preventDefault();
+    openSceneFromDialog();
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+    e.preventDefault();
+    newScene();
+  }
+});
+
+// Show recent projects on launch (no-op when there are no recents)
+showRecentProjects();
 
 // 2. Tooltips
 const _tooltipMap = {

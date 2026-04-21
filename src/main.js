@@ -36,6 +36,27 @@ function buildMenu() {
           }
         },
         { type: 'separator' },
+        {
+          label: 'New Scene',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => { if (mainWindow) mainWindow.webContents.send('new-scene'); }
+        },
+        {
+          label: 'Open Scene...',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => { if (mainWindow) mainWindow.webContents.send('open-scene'); }
+        },
+        {
+          label: 'Save',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => { if (mainWindow) mainWindow.webContents.send('save-scene'); }
+        },
+        {
+          label: 'Save As...',
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: () => { if (mainWindow) mainWindow.webContents.send('save-scene-as'); }
+        },
+        { type: 'separator' },
         { role: 'quit' }
       ]
     },
@@ -121,6 +142,39 @@ app.on('window-all-closed', () => {
 // IPC Handler: Pick the MP4 save folder
 ipcMain.handle('select-mp4-folder', async () => {
   return await pickMp4Folder();
+});
+
+// Mission H - Scene save/load IPC
+ipcMain.handle('save-scene-dialog', async (_event, defaultName) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: (defaultName || 'Untitled') + '.ent',
+    filters: [{ name: 'Refluent Scene', extensions: ['ent'] }],
+    title: 'Save Scene'
+  });
+  return result.canceled ? null : result.filePath;
+});
+
+ipcMain.handle('open-scene-dialog', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'Refluent Scene', extensions: ['ent'] }],
+    properties: ['openFile'],
+    title: 'Open Scene'
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('write-file', async (_event, filePath, content) => {
+  await fs.promises.writeFile(filePath, content, 'utf8');
+  return true;
+});
+
+ipcMain.handle('read-file', async (_event, filePath) => {
+  return await fs.promises.readFile(filePath, 'utf8');
+});
+
+ipcMain.handle('read-file-base64', async (_event, filePath) => {
+  const buf = await fs.promises.readFile(filePath);
+  return buf.toString('base64');
 });
 
 // IPC Handler: Open File Dialog (images, etc.)
