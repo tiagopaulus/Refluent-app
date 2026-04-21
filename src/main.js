@@ -29,12 +29,10 @@ function buildMenu() {
       label: 'Refluent',
       submenu: [
         {
-          label: 'Set MP4 Save Folder...',
-          click: async () => {
-            const folder = await pickMp4Folder();
-            if (folder && mainWindow) {
-              mainWindow.webContents.send('mp4-folder-changed', folder);
-            }
+          label: 'Preferences',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            if (mainWindow) mainWindow.webContents.send('open-preferences');
           }
         },
         { type: 'separator' },

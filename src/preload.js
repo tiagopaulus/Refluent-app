@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFileDialog: (options) => ipcRenderer.invoke('open-file-dialog', options),
   onFileSelected: (callback) => ipcRenderer.on('file-selected', (event, path) => callback(path)),
   selectMp4Folder: () => ipcRenderer.invoke('select-mp4-folder'),
-  onMp4FolderChanged: (callback) => ipcRenderer.on('mp4-folder-changed', (event, folder) => callback(folder))
+  onMp4FolderChanged: (callback) => ipcRenderer.on('mp4-folder-changed', (event, folder) => callback(folder)),
+  onOpenPreferences: (callback) => ipcRenderer.on('open-preferences', () => callback())
 });

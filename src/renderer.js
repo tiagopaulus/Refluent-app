@@ -1729,6 +1729,18 @@ function showWalkthrough() {
     {
       en: { title: 'Record & Render', body: 'Choose a lens and camera movement, press REC to record. Then use the timeline below to generate an AI render.' },
       kr: { title: '녹화 및 렌더', body: '렌즈와 카메라 움직임을 선택하고 REC를 눌러 녹화하세요. 아래 타임라인으로 AI 렌더를 생성하세요.' }
+    },
+    {
+      en: {
+        title: 'Set Your Save Folder',
+        body: 'Choose a folder where your MP4 recordings will be saved automatically. You can change this anytime in Refluent → Preferences.',
+        action: 'Choose Folder'
+      },
+      kr: {
+        title: '저장 폴더 설정',
+        body: 'MP4 녹화 파일이 자동으로 저장될 폴더를 선택하세요. Refluent → 환경설정에서 언제든지 변경할 수 있습니다.',
+        action: '폴더 선택'
+      }
     }
   ];
 
@@ -1764,17 +1776,25 @@ function showWalkthrough() {
             background:#1a1a1a;border:1px solid #555;border-radius:4px;
             color:#fff;font-size:12px;padding:8px 24px;cursor:pointer;">
             ${slide === slides.length - 1
-              ? (lang === 'en' ? 'Get Started' : '시작하기')
+              ? (s.action || (lang === 'en' ? 'Get Started' : '시작하기'))
               : (lang === 'en' ? 'Next →' : '다음 →')}
           </button>
         </div>
       </div>`;
 
-    document.getElementById('wt-next').addEventListener('click', () => {
+    document.getElementById('wt-next').addEventListener('click', async () => {
       if (slide < slides.length - 1) {
         slide++;
         renderSlide();
       } else {
+        const finalSlide = slides[slide][lang];
+        if (finalSlide.action) {
+          const folder = await window.electronAPI.selectMp4Folder();
+          if (folder) {
+            mp4SaveFolder = folder;
+            localStorage.setItem('refluent_mp4_folder', folder);
+          }
+        }
         overlay.remove();
         localStorage.setItem('first_launch', 'done');
       }
@@ -1789,6 +1809,240 @@ function showWalkthrough() {
   document.body.appendChild(overlay);
   renderSlide();
 }
+
+// ---- Mission G ext: Auto Save (placeholder for future scene autosave) ----
+let _autosaveTimer = null;
+function setupAutosave() {
+  if (_autosaveTimer) { clearInterval(_autosaveTimer); _autosaveTimer = null; }
+  const interval = parseInt(localStorage.getItem('autosave_interval') || '0', 10);
+  if (interval > 0) {
+    _autosaveTimer = setInterval(() => {
+      // Reserved hook for future scene auto-save logic
+    }, interval * 60 * 1000);
+  }
+}
+setupAutosave();
+
+// ---- Mission G ext: Preferences window ----
+function showPreferences() {
+  if (document.getElementById('prefs-overlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'prefs-overlay';
+  overlay.style.cssText = `
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7); z-index: 3000;
+    display: flex; align-items: center; justify-content: center;`;
+
+  overlay.innerHTML = `
+    <div id="prefs-modal" style="
+      width: 640px; height: 420px;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      display: flex;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+      position: relative;">
+
+      <div id="prefs-sidebar" style="
+        width: 180px; background: #0f0f0f;
+        border-right: 1px solid #1a1a1a;
+        padding: 16px 0; flex-shrink: 0;">
+        <div style="font-size:10px;color:#444;letter-spacing:2px;
+          padding: 0 16px 12px 16px; text-transform:uppercase;">
+          Preferences
+        </div>
+        <div class="prefs-category active" data-category="files">Files</div>
+        <div class="prefs-category" data-category="autosave">Auto Save</div>
+        <div class="prefs-category" data-category="display">Display</div>
+      </div>
+
+      <div id="prefs-content" style="flex:1; padding: 24px; overflow-y: auto;"></div>
+
+      <button id="prefs-close" style="
+        position: absolute; top: 12px; right: 16px;
+        background: none; border: none; color: #555;
+        font-size: 18px; cursor: pointer;">&#10005;</button>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  if (!document.getElementById('prefs-style')) {
+    const style = document.createElement('style');
+    style.id = 'prefs-style';
+    style.textContent = `
+      .prefs-category {
+        padding: 8px 16px;
+        font-size: 12px;
+        color: #666;
+        cursor: pointer;
+        border-left: 2px solid transparent;
+        transition: all 0.15s;
+      }
+      .prefs-category:hover { color: #aaa; background: #1a1a1a; }
+      .prefs-category.active {
+        color: #fff;
+        background: #1a1a1a;
+        border-left-color: #555;
+      }
+      .prefs-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #1a1a1a;
+      }
+      .prefs-label { font-size: 12px; color: #aaa; }
+      .prefs-sublabel { font-size: 10px; color: #444; margin-top: 2px; }
+      .prefs-section-title {
+        font-size: 10px;
+        color: #444;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-bottom: 16px;
+      }
+      .prefs-btn {
+        background: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 4px;
+        color: #aaa;
+        font-size: 11px;
+        padding: 5px 12px;
+        cursor: pointer;
+      }
+      .prefs-btn:hover { border-color: #555; color: #fff; }
+      .prefs-path {
+        font-size: 10px;
+        color: #444;
+        margin-top: 4px;
+        word-break: break-all;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const categories = {
+    files: () => `
+      <div class="prefs-section-title">Files</div>
+      <div class="prefs-row">
+        <div>
+          <div class="prefs-label">MP4 Save Folder</div>
+          <div class="prefs-sublabel">Where recordings are automatically saved</div>
+          <div class="prefs-path" id="mp4-folder-display">
+            ${localStorage.getItem('refluent_mp4_folder') || 'Not set'}
+          </div>
+        </div>
+        <button class="prefs-btn" id="change-mp4-folder">Browse...</button>
+      </div>`,
+
+    autosave: () => `
+      <div class="prefs-section-title">Auto Save</div>
+      <div class="prefs-row">
+        <div>
+          <div class="prefs-label">Auto Save Interval</div>
+          <div class="prefs-sublabel">How often your scene is automatically saved</div>
+        </div>
+        <select id="autosave-interval" style="
+          background:#1a1a1a;border:1px solid #333;border-radius:4px;
+          color:#aaa;font-size:11px;padding:5px 8px;">
+          <option value="0" ${!localStorage.getItem('autosave_interval') || localStorage.getItem('autosave_interval')==='0' ? 'selected' : ''}>Off</option>
+          <option value="5" ${localStorage.getItem('autosave_interval')==='5' ? 'selected' : ''}>Every 5 minutes</option>
+          <option value="10" ${localStorage.getItem('autosave_interval')==='10' ? 'selected' : ''}>Every 10 minutes</option>
+          <option value="30" ${localStorage.getItem('autosave_interval')==='30' ? 'selected' : ''}>Every 30 minutes</option>
+        </select>
+      </div>
+      <div class="prefs-row">
+        <div>
+          <div class="prefs-label">Auto Save Folder</div>
+          <div class="prefs-sublabel">Where backup scene files are saved</div>
+          <div class="prefs-path" id="autosave-folder-display">
+            ${localStorage.getItem('autosave_folder') || 'Not set'}
+          </div>
+        </div>
+        <button class="prefs-btn" id="change-autosave-folder">Browse...</button>
+      </div>`,
+
+    display: () => `
+      <div class="prefs-section-title">Display</div>
+      <div class="prefs-row">
+        <div>
+          <div class="prefs-label">Default Layout</div>
+          <div class="prefs-sublabel">Layout mode when app opens</div>
+        </div>
+        <select id="default-layout" style="
+          background:#1a1a1a;border:1px solid #333;border-radius:4px;
+          color:#aaa;font-size:11px;padding:5px 8px;">
+          <option value="simple" ${(localStorage.getItem('layout_mode')||'simple')==='simple' ? 'selected':''}>Simple Mode</option>
+          <option value="node" ${localStorage.getItem('layout_mode')==='node' ? 'selected':''}>Node Editor</option>
+        </select>
+      </div>`
+  };
+
+  function loadCategory(cat) {
+    document.getElementById('prefs-content').innerHTML = categories[cat]();
+    document.querySelectorAll('.prefs-category').forEach(el => {
+      el.classList.toggle('active', el.dataset.category === cat);
+    });
+
+    const mp4Btn = document.getElementById('change-mp4-folder');
+    if (mp4Btn) {
+      mp4Btn.addEventListener('click', async () => {
+        const folder = await window.electronAPI.selectMp4Folder();
+        if (folder) {
+          mp4SaveFolder = folder;
+          localStorage.setItem('refluent_mp4_folder', folder);
+          document.getElementById('mp4-folder-display').textContent = folder;
+        }
+      });
+    }
+
+    const intervalSelect = document.getElementById('autosave-interval');
+    if (intervalSelect) {
+      intervalSelect.addEventListener('change', () => {
+        localStorage.setItem('autosave_interval', intervalSelect.value);
+        setupAutosave();
+      });
+    }
+
+    const autosaveBtn = document.getElementById('change-autosave-folder');
+    if (autosaveBtn) {
+      autosaveBtn.addEventListener('click', async () => {
+        const folder = await window.electronAPI.selectMp4Folder();
+        if (folder) {
+          localStorage.setItem('autosave_folder', folder);
+          document.getElementById('autosave-folder-display').textContent = folder;
+        }
+      });
+    }
+
+    const layoutSelect = document.getElementById('default-layout');
+    if (layoutSelect) {
+      layoutSelect.addEventListener('change', () => {
+        localStorage.setItem('layout_mode', layoutSelect.value);
+      });
+    }
+  }
+
+  document.querySelectorAll('.prefs-category').forEach(el => {
+    el.addEventListener('click', () => loadCategory(el.dataset.category));
+  });
+
+  loadCategory('files');
+
+  document.getElementById('prefs-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+window.electronAPI.onOpenPreferences(() => showPreferences());
+
+window.addEventListener('keydown', (e) => {
+  if (_isTypingTarget()) return;
+  if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+    e.preventDefault();
+    showPreferences();
+  }
+});
 
 // 2. Tooltips
 const _tooltipMap = {
