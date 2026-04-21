@@ -831,6 +831,23 @@ stopBtn.addEventListener('click', () => {
 });
 
 // ---- Camera Animation Setup ----
+// Mission C: inject Dolly Zoom radio into the camera-type group
+(function injectDollyZoomRadio() {
+  const group = document.getElementById('cam-move-radios');
+  if (!group || document.getElementById('cam-dolly-zoom')) return;
+  const input = document.createElement('input');
+  input.type = 'radio';
+  input.id = 'cam-dolly-zoom';
+  input.name = 'camType';
+  input.value = 'dollyZoom';
+  const lbl = document.createElement('label');
+  lbl.setAttribute('for', 'cam-dolly-zoom');
+  lbl.setAttribute('data-i18n', 'dollyZoom');
+  lbl.innerText = getTranslation('dollyZoom');
+  group.appendChild(input);
+  group.appendChild(lbl);
+})();
+
 const camRadios = document.querySelectorAll('input[name="camType"]');
 const camDirSection = document.getElementById('cam-dir-section');
 const lblDir1 = document.getElementById('lbl-dir-1');
@@ -860,6 +877,17 @@ let currentCamType = 'pushIn';
 camRadios.forEach(r => {
   r.addEventListener('change', (e) => {
     currentCamType = e.target.value;
+
+    if (currentCamType === 'dollyZoom') {
+      camSpeedSlider.max = '20.0';
+    } else {
+      camSpeedSlider.max = '5.0';
+      if (parseFloat(camSpeedSlider.value) > 5.0) {
+        camSpeedSlider.value = '5.0';
+        camSpeedVal.innerText = '5.0';
+      }
+    }
+
     if (currentCamType === 'pushIn' || currentCamType === 'pullOut') {
       camDirSection.style.display = 'none';
     } else {
@@ -869,6 +897,11 @@ camRadios.forEach(r => {
         lblDir1.setAttribute('data-i18n', 'up');
         lblDir2.innerText = getTranslation('down');
         lblDir2.setAttribute('data-i18n', 'down');
+      } else if (currentCamType === 'dollyZoom') {
+        lblDir1.innerText = getTranslation('inDir');
+        lblDir1.setAttribute('data-i18n', 'inDir');
+        lblDir2.innerText = getTranslation('outDir');
+        lblDir2.setAttribute('data-i18n', 'outDir');
       } else {
         lblDir1.innerText = getTranslation('left');
         lblDir1.setAttribute('data-i18n', 'left');
@@ -892,6 +925,13 @@ let stopEaseTime = 0;
 let stopEaseDuration = 0.5;
 let stopStartPos = new THREE.Vector3();
 let stopStartQuat = new THREE.Quaternion();
+
+// Dolly Zoom state (Mission C)
+let dzInitialized = false;
+let dzStartFov = 0;
+let dzTargetFovAnim = 0;
+let dzStartPos = new THREE.Vector3();
+let dzTargetPos = new THREE.Vector3();
 
 function updateCamStatus() {
   if (camAnimState === 'idle') {
@@ -930,11 +970,13 @@ function startCameraMove() {
     animStartQuat.copy(camera.quaternion);
     animStartTarget.copy(controls.target);
   }
-  
+
   camera.position.copy(animStartPos);
   camera.quaternion.copy(animStartQuat);
   controls.target.copy(animStartTarget);
   controls.update();
+
+  dzInitialized = false;
 
   animTimeElapsed = 0;
   animDuration = parseFloat(camDurSlider.value);
@@ -1047,9 +1089,30 @@ updateCameraAnimation = function() {
       const xAxis = new THREE.Vector3(1, 0, 0);
       camera.rotateOnAxis(xAxis, dirValue * speed * delta);
     }
+  } else if (currentCamType === 'dollyZoom') {
+    if (!dzInitialized) {
+      dzStartFov = camera.fov;
+      dzStartPos.copy(camera.position);
+      const targetVec = controls.target.clone();
+      const startDist = camera.position.distanceTo(controls.target);
+      const fovDelta = -25 * speed * dirValue;
+      dzTargetFovAnim = THREE.MathUtils.clamp(dzStartFov + fovDelta, 5, 150);
+      const fovRatio = Math.tan(THREE.MathUtils.degToRad(dzTargetFovAnim / 2)) /
+                       Math.tan(THREE.MathUtils.degToRad(dzStartFov / 2));
+      const targetDist = startDist * fovRatio;
+      const moveDir = dzStartPos.clone().sub(targetVec).normalize();
+      dzTargetPos.copy(targetVec).add(moveDir.multiplyScalar(targetDist));
+      dzInitialized = true;
+    }
+    const t = Math.min(animTimeElapsed / animDuration, 1);
+    const ease = easeInOutQuad(t);
+    camera.fov = THREE.MathUtils.lerp(dzStartFov, dzTargetFovAnim, ease);
+    targetFov = camera.fov;
+    camera.position.lerpVectors(dzStartPos, dzTargetPos, ease);
+    camera.updateProjectionMatrix();
   }
 
-  if (camLockTarget.checked && currentCamType !== 'pan' && currentCamType !== 'tilt') {
+  if (camLockTarget.checked && currentCamType !== 'pan' && currentCamType !== 'tilt' && currentCamType !== 'dollyZoom') {
     camera.lookAt(controls.target);
     controls.update();
   }
@@ -1317,6 +1380,7 @@ Object.entries(_tooltipMap).forEach(([id, key]) => {
   ['cam-dolly', 'descDolly'],
   ['cam-pan', 'descPan'],
   ['cam-tilt', 'descTilt'],
+  ['cam-dolly-zoom', 'descDollyZoom'],
 ].forEach(([radioId, descKey]) => {
   const lbl = document.querySelector(`label[for="${radioId}"]`);
   if (lbl) {
