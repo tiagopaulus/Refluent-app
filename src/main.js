@@ -107,7 +107,7 @@ let splashWindow;
 
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
-    width: 480,
+    width: 854,
     height: 480,
     transparent: true,
     frame: false,
@@ -150,11 +150,11 @@ app.whenReady().then(() => {
   createSplashWindow();
   createWindow();
 
-  // Show splash for at least 2.5s, then close it and reveal the main window
+  // Show splash for the full 4s video, then close it and reveal the main window
   const splashStart = Date.now();
   mainWindow.webContents.once('did-finish-load', () => {
     const elapsed = Date.now() - splashStart;
-    const wait = Math.max(0, 2500 - elapsed);
+    const wait = Math.max(0, 4000 - elapsed);
     setTimeout(() => {
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
       if (mainWindow && !mainWindow.isDestroyed()) {

@@ -5,7 +5,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 480px; height: 480px;
+      width: 854px; height: 480px;
       background: transparent;
       overflow: hidden;
       display: flex;
@@ -16,9 +16,9 @@
     #splash-bg {
       position: absolute;
       top: 0; left: 0;
-      width: 480px; height: 480px;
+      width: 854px; height: 480px;
       background: #080a0c;
-      border-radius: 16px;
+      border-radius: 12px;
       opacity: 0;
       animation: fadeIn 0.4s ease forwards;
     }
@@ -59,10 +59,10 @@
     #splash-video {
       position: absolute;
       top: 0; left: 0;
-      width: 100%; height: 100%;
+      width: 854px; height: 480px;
       object-fit: cover;
-      border-radius: 16px;
-      display: none;
+      border-radius: 12px;
+      display: block;
     }
     @keyframes fadeIn {
       from { opacity: 0; transform: scale(0.97); }
@@ -72,9 +72,13 @@
 </head>
 <body>
   <div id="splash-bg"></div>
-  <!-- Optional splash video. Drop a file at src/splash-video.mp4 and uncomment to enable.
-  <video id="splash-video" src="./splash-video.mp4" autoplay muted playsinline style="display:block;"></video>
-  -->
+  <video id="splash-video"
+    src="./splash-video.mp4"
+    autoplay muted playsinline
+    style="width:100%;height:100%;object-fit:cover;border-radius:12px;">
+  </video>
+  <!-- Static logo fallback (hidden when video is active). To restore: remove the <video> above
+       and the inline display:none here.
   <div id="logo-container">
     <img id="logo-img" src="../assets/icon.png" alt="Refluent">
     <div>
@@ -82,5 +86,12 @@
       <div id="logo-tagline">Creative Viewport</div>
     </div>
   </div>
+  -->
+  <script>
+    // If the video fails to load, fall back to the static logo
+    document.getElementById('splash-video').addEventListener('error', () => {
+      document.getElementById('splash-video').style.display = 'none';
+    });
+  </script>
 </body>
 </html>
