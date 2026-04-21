@@ -36,6 +36,68 @@ let targetFov = 54;
 // before selectedObject and objectPopup are initialized later in the file
 let _popupReady = false;
 
+// Object animation clock - runs continuously for per-frame deltas
+const objAnimClock = new THREE.Clock();
+
+const RATIO_MAP = {
+  '16:9': 16 / 9,
+  '1:1':  1,
+  '4:5':  4 / 5,
+  '3:4':  3 / 4,
+  '9:16': 9 / 16
+};
+
+function updateObjectAnimations(delta) {
+  scene.traverse(obj => {
+    if (!obj.userData || !obj.userData.animTemplate || obj.userData.animTemplate === 'none') return;
+    obj.userData.animTime = (obj.userData.animTime || 0) + delta;
+    const t = obj.userData.animTime;
+    const startPos = obj.userData.animStartPos;
+    const startScale = obj.userData.animStartScale;
+    if (!startPos) return;
+
+    switch (obj.userData.animTemplate) {
+      case 'float':
+        obj.position.y = startPos.y + Math.sin(t * 1.2) * 0.15;
+        break;
+      case 'land':
+        if (t < 3) {
+          const drop = Math.max(0, 1 - t / 1.5);
+          const bounce = t > 1.5 ? Math.abs(Math.sin((t - 1.5) * 4)) * 0.1 * Math.exp(-(t - 1.5) * 2) : 0;
+          obj.position.y = startPos.y + drop * 2 + bounce;
+        } else {
+          obj.position.y = startPos.y;
+        }
+        break;
+      case 'slide-in':
+        if (t < 2) {
+          const ease = 1 - Math.pow(1 - Math.min(t / 1.5, 1), 3);
+          obj.position.x = startPos.x + (1 - ease) * -3;
+        } else {
+          obj.position.x = startPos.x;
+        }
+        break;
+      case 'reveal':
+        if (t < 2) {
+          const ease = 1 - Math.pow(1 - Math.min(t / 1.5, 1), 3);
+          obj.position.y = startPos.y + (1 - ease) * -3;
+        } else {
+          obj.position.y = startPos.y;
+        }
+        break;
+      case 'rotate':
+        obj.rotation.y = (obj.userData.animStartRotY || 0) + t * 0.5;
+        break;
+      case 'pulse':
+        if (startScale) {
+          const pulse = 1 + Math.sin(t * 1.5) * 0.04;
+          obj.scale.set(startScale.x * pulse, startScale.y * pulse, startScale.z * pulse);
+        }
+        break;
+    }
+  });
+}
+
 // ---- Pipeline State ----
 const pipelineState = {
   mp4Path: null,
@@ -178,6 +240,8 @@ function drawSunPreview() {
 
 function animate() {
   requestAnimationFrame(animate);
+  // Per-frame object animations (templates) — runs every frame
+  updateObjectAnimations(objAnimClock.getDelta());
   let animHandled = false;
   if (updateCameraAnimation) {
     animHandled = updateCameraAnimation();
@@ -454,12 +518,39 @@ objectPopup.innerHTML = `
     font-size:11px;padding:5px;cursor:pointer;">
     &#8634; Reset Scale
   </button>
+  <div style="border-top:1px solid #1a1a1a;margin-top:8px;padding-top:8px;">
+    <div id="popup-anim-label" style="font-size:11px;color:#777;margin-bottom:6px;">Animate object</div>
+    <select id="anim-template-select" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:4px 6px;margin-bottom:6px;">
+      <option value="none">No animation</option>
+      <option value="float">Float — gentle hover</option>
+      <option value="land">Land — drop and settle</option>
+      <option value="slide-in">Slide In — enter from side</option>
+      <option value="reveal">Reveal — rise from below</option>
+      <option value="rotate">Rotate — slow spin</option>
+      <option value="pulse">Pulse — subtle breathe</option>
+    </select>
+    <button id="anim-preview-btn" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:4px;cursor:pointer;">&#9654; Preview</button>
+  </div>
 `;
 document.getElementById('viewport').appendChild(objectPopup);
 
 // Localized labels
 document.getElementById('popup-move-label').innerText = getTranslation('panelMove');
 document.getElementById('popup-resize-label').innerText = getTranslation('panelResize');
+const _animLabelEl = document.getElementById('popup-anim-label');
+if (_animLabelEl) _animLabelEl.innerText = getTranslation('animateObject');
+const _animPrevBtn = document.getElementById('anim-preview-btn');
+if (_animPrevBtn) _animPrevBtn.innerHTML = '&#9654; ' + getTranslation('animPreview');
+// Localize animation template option labels
+(function _localizeAnimOptions() {
+  const sel = document.getElementById('anim-template-select');
+  if (!sel) return;
+  const map = { none: 'animNone', float: 'animFloat', land: 'animLand', 'slide-in': 'animSlideIn', reveal: 'animReveal', rotate: 'animRotate', pulse: 'animPulse' };
+  Array.from(sel.options).forEach(opt => {
+    const k = map[opt.value];
+    if (k) opt.text = getTranslation(k);
+  });
+})();
 
 const popupSliders = objectPopup.querySelectorAll('input[type="range"]');
 const sliderBaseValues = {};
@@ -521,6 +612,27 @@ document.getElementById('reset-scale-btn').addEventListener('click', () => {
   markSceneModified();
 });
 
+// Animation template selection
+document.getElementById('anim-template-select').addEventListener('change', (e) => {
+  if (!selectedObject) return;
+  const template = e.target.value;
+  selectedObject.userData.animTemplate = template;
+  selectedObject.userData.animStartPos = selectedObject.position.clone();
+  selectedObject.userData.animStartScale = selectedObject.scale.clone();
+  selectedObject.userData.animStartRotY = selectedObject.rotation.y;
+  selectedObject.userData.animTime = 0;
+  markSceneModified();
+});
+
+// Preview animation - reset time and snap back to start state
+document.getElementById('anim-preview-btn').addEventListener('click', () => {
+  if (!selectedObject || !selectedObject.userData.animTemplate || selectedObject.userData.animTemplate === 'none') return;
+  selectedObject.userData.animTime = 0;
+  if (selectedObject.userData.animStartPos) selectedObject.position.copy(selectedObject.userData.animStartPos);
+  if (selectedObject.userData.animStartScale) selectedObject.scale.copy(selectedObject.userData.animStartScale);
+  if (typeof selectedObject.userData.animStartRotY === 'number') selectedObject.rotation.y = selectedObject.userData.animStartRotY;
+});
+
 // Double-click rename - UUID-safe (popup may outlive selection changes mid-edit)
 objectPopup.addEventListener('dblclick', (e) => {
   if (!e.target.classList || !e.target.classList.contains('object-popup-name')) return;
@@ -568,6 +680,9 @@ function showObjectPopup(obj) {
   if (nameEl) nameEl.textContent = obj.userData.name || obj.userData.modelName || 'Object';
   // Delta-mode: sliders open centered; mousedown captures the live base value
   popupSliders.forEach(s => { s.value = 0; });
+  // Sync animation dropdown to the selected object's saved template
+  const animSel = document.getElementById('anim-template-select');
+  if (animSel) animSel.value = obj.userData.animTemplate || 'none';
   updatePopupPosition();
 }
 
@@ -1147,7 +1262,8 @@ recordBtn.addEventListener('click', async () => {
   const glyphWasVisible = targetGlyph.visible;
   const gizmoDisplay = gizmoRenderer.domElement.style.display;
   
-  // Hide elements for recording
+  // Hide elements for recording (safe-frame stays visible — DOM overlays
+  // aren't captured by canvas.captureStream, and it serves as composition guide)
   gridHelper.visible = false;
   targetGlyph.visible = false;
   gizmoRenderer.domElement.style.display = 'none';
@@ -1199,11 +1315,13 @@ recordBtn.addEventListener('click', async () => {
     document.getElementById('export-overlay').classList.remove('hidden');
     
     const outputFilename = getNextMp4Filename();
+    const ratio = document.getElementById('ratio-select')?.value || '16:9';
     const result = await window.electronAPI.convertWebmToMp4({
       arrayBuffer,
       duration,
       outputFolder: mp4SaveFolder,
-      outputFilename
+      outputFilename,
+      ratio
     });
     
     document.getElementById('export-overlay').classList.add('hidden');
@@ -1611,6 +1729,100 @@ sunReset.addEventListener('click', () => {
   dirLight.position.set(defaultLightPos.x, defaultLightPos.y, defaultLightPos.z);
   dirLight.target.updateMatrixWorld();
 });
+
+// ---- Aspect Ratio Safe Frame ----
+const _existingSafeFrame = document.getElementById('safe-frame-overlay');
+if (_existingSafeFrame) _existingSafeFrame.remove();
+
+const safeFrameOverlay = document.createElement('div');
+safeFrameOverlay.id = 'safe-frame-overlay';
+document.getElementById('viewport').appendChild(safeFrameOverlay);
+
+function positionSafeFrameOverlay() {
+  const overlay = document.getElementById('safe-frame-overlay');
+  if (!overlay) return;
+  const canvas = renderer.domElement;
+  if (!canvas) return;
+
+  const rect = canvas.getBoundingClientRect();
+
+  // Subtract bottom toolbar so the overlay never covers Add Box / Import etc.
+  let toolbarHeight = 0;
+  const toolbarEl = document.querySelector('#viewport .toolbar');
+  if (toolbarEl) {
+    const tr = toolbarEl.getBoundingClientRect();
+    // Only count it if the toolbar actually overlaps the canvas's bottom area
+    if (tr.height > 0 && tr.bottom > rect.top && tr.top < rect.bottom) {
+      toolbarHeight = Math.max(0, rect.bottom - tr.top + 4);
+    }
+  }
+
+  // Fixed positioning at body level — sidesteps any nested stacking-context surprises
+  overlay.style.position = 'fixed';
+  overlay.style.left = rect.left + 'px';
+  overlay.style.top = rect.top + 'px';
+  overlay.style.width = rect.width + 'px';
+  overlay.style.height = Math.max(0, rect.height - toolbarHeight) + 'px';
+  overlay.style.pointerEvents = 'none';
+  overlay.style.zIndex = '50';
+  overlay.style.overflow = 'hidden';
+
+  if (overlay.parentElement !== document.body) {
+    document.body.appendChild(overlay);
+  }
+}
+
+function updateSafeFrame() {
+  const select = document.getElementById('ratio-select');
+  const overlay = document.getElementById('safe-frame-overlay');
+  if (!overlay || !select) return;
+
+  positionSafeFrameOverlay();
+
+  const ratio = RATIO_MAP[select.value];
+  // Use the overlay's own dimensions — already excludes the bottom toolbar
+  const vw = parseInt(overlay.style.width) || renderer.domElement.clientWidth;
+  const vh = parseInt(overlay.style.height) || renderer.domElement.clientHeight;
+  if (vw === 0 || vh === 0) return;
+  const viewportRatio = vw / vh;
+
+  if (Math.abs(viewportRatio - ratio) < 0.02) {
+    overlay.innerHTML = '';
+    return;
+  }
+
+  let safeW, safeH;
+  if (ratio > viewportRatio) {
+    safeW = vw;
+    safeH = Math.round(vw / ratio);
+  } else {
+    safeH = vh;
+    safeW = Math.round(vh * ratio);
+  }
+
+  const safeLeft = Math.round((vw - safeW) / 2);
+  const safeTop = Math.round((vh - safeH) / 2);
+
+  const teal = 'rgba(30,90,90,0.75)';
+  overlay.innerHTML = `
+    <div style="position:absolute;top:0;left:0;width:${vw}px;height:${safeTop}px;background:${teal};"></div>
+    <div style="position:absolute;bottom:0;left:0;width:${vw}px;height:${safeTop}px;background:${teal};"></div>
+    <div style="position:absolute;top:${safeTop}px;left:0;width:${safeLeft}px;height:${safeH}px;background:${teal};"></div>
+    <div style="position:absolute;top:${safeTop}px;right:0;width:${safeLeft}px;height:${safeH}px;background:${teal};"></div>
+    <div style="position:absolute;top:${safeTop}px;left:${safeLeft}px;width:${safeW}px;height:${safeH}px;border:1px solid rgba(255,255,255,0.2);box-sizing:border-box;"></div>
+    <div style="position:absolute;top:${safeTop+8}px;left:${safeLeft+10}px;font-size:10px;color:rgba(255,255,255,0.3);font-family:monospace;letter-spacing:1px;pointer-events:none;">${select.value}</div>`;
+}
+
+document.getElementById('ratio-select').addEventListener('change', () => {
+  updateSafeFrame();
+  markSceneModified();
+});
+window.addEventListener('resize', () => {
+  positionSafeFrameOverlay();
+  updateSafeFrame();
+});
+positionSafeFrameOverlay();
+updateSafeFrame();
 
 // ---- Vignette + Lens HUD ----
 const vignetteEl = document.createElement('div');
@@ -2216,17 +2428,26 @@ async function saveScene(saveAs = false) {
       entry.modelData = obj.userData.modelData;
       entry.modelFormat = obj.userData.modelFormat;
     }
+    if (obj.userData.animTemplate && obj.userData.animTemplate !== 'none') {
+      entry.animTemplate = obj.userData.animTemplate;
+      entry.animStartPos = obj.userData.animStartPos ? obj.userData.animStartPos.toArray() : null;
+      entry.animStartScale = obj.userData.animStartScale ? obj.userData.animStartScale.toArray() : null;
+      if (typeof obj.userData.animStartRotY === 'number') entry.animStartRotY = obj.userData.animStartRotY;
+    }
     objects.push(entry);
   });
 
   const lensSel = document.getElementById('lens-select');
   const camDirChecked = document.querySelector('input[name="camDir"]:checked');
 
+  const ratioSel = document.getElementById('ratio-select');
+
   const sceneData = {
     version: '1.1',
     name: currentSceneName || 'Untitled',
     savedAt: new Date().toISOString(),
     thumbnail,
+    ratio: ratioSel ? ratioSel.value : '16:9',
 
     camera: {
       position: camera.position.toArray(),
@@ -2434,7 +2655,26 @@ async function loadScene(filePath) {
     if (Array.isArray(obj.scale)) mesh.scale.fromArray(obj.scale);
     if (Array.isArray(obj.rotation)) mesh.rotation.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
     if (obj.color && mesh.material && mesh.material.color) mesh.material.color.set('#' + obj.color);
+    if (obj.animTemplate && obj.animTemplate !== 'none') {
+      mesh.userData.animTemplate = obj.animTemplate;
+      mesh.userData.animStartPos = obj.animStartPos
+        ? new THREE.Vector3().fromArray(obj.animStartPos)
+        : mesh.position.clone();
+      mesh.userData.animStartScale = obj.animStartScale
+        ? new THREE.Vector3().fromArray(obj.animStartScale)
+        : mesh.scale.clone();
+      if (typeof obj.animStartRotY === 'number') mesh.userData.animStartRotY = obj.animStartRotY;
+      mesh.userData.animTime = 0;
+    }
     scene.add(mesh);
+  }
+
+  if (data.ratio) {
+    const ratioSelect = document.getElementById('ratio-select');
+    if (ratioSelect) {
+      ratioSelect.value = data.ratio;
+      updateSafeFrame();
+    }
   }
 
   // ---- Layout ----
@@ -2721,6 +2961,8 @@ function setLayout(mode) {
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     }
+    if (typeof positionSafeFrameOverlay === 'function') positionSafeFrameOverlay();
+    if (typeof updateSafeFrame === 'function') updateSafeFrame();
     // Reposition object popup after viewport dimensions have settled
     if (selectedObject && !objectPopup.classList.contains('hidden')) {
       showObjectPopup(selectedObject);
@@ -2728,8 +2970,14 @@ function setLayout(mode) {
   });
 }
 
-if (btnSimple) btnSimple.addEventListener('click', () => setLayout('simple'));
-if (btnNode)   btnNode.addEventListener('click',   () => setLayout('node'));
+function _layoutPostSwitch() {
+  setTimeout(() => {
+    if (typeof positionSafeFrameOverlay === 'function') positionSafeFrameOverlay();
+    if (typeof updateSafeFrame === 'function') updateSafeFrame();
+  }, 100);
+}
+if (btnSimple) btnSimple.addEventListener('click', () => { setLayout('simple'); _layoutPostSwitch(); });
+if (btnNode)   btnNode.addEventListener('click',   () => { setLayout('node');   _layoutPostSwitch(); });
 
 const savedLayout = localStorage.getItem('layout_mode') || 'simple';
 setLayout(savedLayout);

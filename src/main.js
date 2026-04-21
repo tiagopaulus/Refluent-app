@@ -200,7 +200,23 @@ ipcMain.handle('dialog:openModel', async () => {
 });
 
 // IPC Handler: Convert WebM to MP4
-ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration, outputFolder, outputFilename }) => {
+// Aspect-ratio aware ffmpeg filters
+const RATIO_CROP = {
+  '16:9': null,
+  '1:1':  'crop=ih:ih',
+  '4:5':  'crop=ih*(4/5):ih',
+  '3:4':  'crop=ih*(3/4):ih',
+  '9:16': 'crop=ih*(9/16):ih'
+};
+const RATIO_OUTPUT = {
+  '16:9': { w: 1920, h: 1080 },
+  '1:1':  { w: 1080, h: 1080 },
+  '4:5':  { w: 1080, h: 1350 },
+  '3:4':  { w: 1080, h: 1440 },
+  '9:16': { w: 1080, h: 1920 }
+};
+
+ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration, outputFolder, outputFilename, ratio }) => {
   return new Promise((resolve, reject) => {
     try {
       const tempBasePath = path.join(app.getPath('temp'), `viewport-recording-${Date.now()}`);
@@ -225,7 +241,13 @@ ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration,
           return resolve({ success: false, message: 'Failed to verify temp webm file.' });
         }
 
-        console.log('[Main] FFmpeg conversion started');
+        const useRatio = ratio && RATIO_OUTPUT[ratio] ? ratio : '16:9';
+        const cropFilter = RATIO_CROP[useRatio];
+        const out = RATIO_OUTPUT[useRatio];
+        const vfFilter = cropFilter
+          ? `${cropFilter},scale=${out.w}:${out.h}`
+          : `scale=${out.w}:${out.h}`;
+        console.log('[Main] FFmpeg conversion started, ratio=' + useRatio + ', vf=' + vfFilter);
         event.sender.send('export-progress', 0);
         fluentFfmpeg(tempWebmPath)
           .outputOptions([
@@ -235,7 +257,7 @@ ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration,
             '-crf', '18',
             '-preset', 'slow',
             '-movflags', '+faststart',
-            '-vf', 'scale=1920:-2'
+            '-vf', vfFilter
           ])
           .save(tempMp4Path)
           .on('stderr', (stderrLine) => {
