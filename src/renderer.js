@@ -52,48 +52,52 @@ function updateObjectAnimations(delta) {
     if (!obj.userData || !obj.userData.animTemplate || obj.userData.animTemplate === 'none') return;
     obj.userData.animTime = (obj.userData.animTime || 0) + delta;
     const t = obj.userData.animTime;
-    const startPos = obj.userData.animStartPos;
-    const startScale = obj.userData.animStartScale;
-    if (!startPos) return;
+    const sp = obj.userData.animStartPos;
+    if (!sp) return;
 
     switch (obj.userData.animTemplate) {
       case 'float':
-        obj.position.y = startPos.y + Math.sin(t * 1.2) * 0.15;
+        // Gentle sine wave — smooth infinite loop
+        obj.position.y = sp.y + Math.sin(t * 1.2) * 0.18;
         break;
-      case 'land':
-        if (t < 3) {
-          const drop = Math.max(0, 1 - t / 1.5);
-          const bounce = t > 1.5 ? Math.abs(Math.sin((t - 1.5) * 4)) * 0.1 * Math.exp(-(t - 1.5) * 2) : 0;
-          obj.position.y = startPos.y + drop * 2 + bounce;
+
+      case 'land': {
+        // Loop: drop from above, bounce settle, pause, repeat
+        const landCycle = 3.5;
+        const landT = t % landCycle;
+        if (landT < 1.2) {
+          const ease = 1 - Math.pow(1 - landT / 1.2, 3);
+          obj.position.y = sp.y + (1 - ease) * 3;
+        } else if (landT < 2.5) {
+          const bounce = Math.abs(Math.sin((landT - 1.2) * 5))
+            * 0.12 * Math.exp(-(landT - 1.2) * 3);
+          obj.position.y = sp.y + bounce;
         } else {
-          obj.position.y = startPos.y;
+          obj.position.y = sp.y;
         }
         break;
-      case 'slide-in':
-        if (t < 2) {
-          const ease = 1 - Math.pow(1 - Math.min(t / 1.5, 1), 3);
-          obj.position.x = startPos.x + (1 - ease) * -3;
-        } else {
-          obj.position.x = startPos.x;
-        }
-        break;
-      case 'reveal':
-        if (t < 2) {
-          const ease = 1 - Math.pow(1 - Math.min(t / 1.5, 1), 3);
-          obj.position.y = startPos.y + (1 - ease) * -3;
-        } else {
-          obj.position.y = startPos.y;
-        }
-        break;
+      }
+
       case 'rotate':
-        obj.rotation.y = (obj.userData.animStartRotY || 0) + t * 0.5;
+        obj.rotation.y = (obj.userData.animStartRotY || 0) + t * 0.6;
         break;
-      case 'pulse':
-        if (startScale) {
-          const pulse = 1 + Math.sin(t * 1.5) * 0.04;
-          obj.scale.set(startScale.x * pulse, startScale.y * pulse, startScale.z * pulse);
+
+      case 'slide-in': {
+        // Loop: enter from left, hold, exit right, repeat
+        const slideCycle = 3.0;
+        const slideT = t % slideCycle;
+        if (slideT < 1.2) {
+          const ease = 1 - Math.pow(1 - slideT / 1.2, 4);
+          obj.position.x = sp.x + (1 - ease) * -4;
+        } else if (slideT < 2.2) {
+          obj.position.x = sp.x;
+        } else {
+          const exitT = (slideT - 2.2) / 0.8;
+          const exitEase = Math.pow(exitT, 2);
+          obj.position.x = sp.x + exitEase * 4;
         }
         break;
+      }
     }
   });
 }
@@ -518,18 +522,16 @@ objectPopup.innerHTML = `
     font-size:11px;padding:5px;cursor:pointer;">
     &#8634; Reset Scale
   </button>
-  <div style="border-top:1px solid #1a1a1a;margin-top:8px;padding-top:8px;">
-    <div id="popup-anim-label" style="font-size:11px;color:#777;margin-bottom:6px;">Animate object</div>
-    <select id="anim-template-select" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:4px 6px;margin-bottom:6px;">
-      <option value="none">No animation</option>
-      <option value="float">Float — gentle hover</option>
-      <option value="land">Land — drop and settle</option>
-      <option value="slide-in">Slide In — enter from side</option>
-      <option value="reveal">Reveal — rise from below</option>
-      <option value="rotate">Rotate — slow spin</option>
-      <option value="pulse">Pulse — subtle breathe</option>
-    </select>
-    <button id="anim-preview-btn" style="width:100%;background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#aaa;font-size:11px;padding:4px;cursor:pointer;">&#9654; Preview</button>
+  <div id="popup-anim-section" style="border-top:1px solid #1e1e1e;margin-top:10px;padding-top:8px;">
+    <div id="popup-anim-label" style="font-size:10px;color:#555;margin-bottom:6px;letter-spacing:1px;">ANIMATE</div>
+    <div id="anim-btns" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+      <button class="anim-btn" data-anim="none" style="grid-column:1/-1;">&#10005; No Animation</button>
+      <button class="anim-btn" data-anim="float">&#11014; Float</button>
+      <button class="anim-btn" data-anim="land">&#11015; Land</button>
+      <button class="anim-btn" data-anim="rotate">&#8635; Rotate</button>
+      <button class="anim-btn" data-anim="slide-in">&#8594; Slide In</button>
+    </div>
+    <button id="anim-preview-btn" style="width:100%;margin-top:6px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:3px;color:#555;font-size:10px;padding:4px;cursor:pointer;display:none;">&#9654; Preview</button>
   </div>
 `;
 document.getElementById('viewport').appendChild(objectPopup);
@@ -538,17 +540,21 @@ document.getElementById('viewport').appendChild(objectPopup);
 document.getElementById('popup-move-label').innerText = getTranslation('panelMove');
 document.getElementById('popup-resize-label').innerText = getTranslation('panelResize');
 const _animLabelEl = document.getElementById('popup-anim-label');
-if (_animLabelEl) _animLabelEl.innerText = getTranslation('animateObject');
+if (_animLabelEl) _animLabelEl.innerText = getTranslation('animate').toUpperCase();
 const _animPrevBtn = document.getElementById('anim-preview-btn');
 if (_animPrevBtn) _animPrevBtn.innerHTML = '&#9654; ' + getTranslation('animPreview');
-// Localize animation template option labels
-(function _localizeAnimOptions() {
-  const sel = document.getElementById('anim-template-select');
-  if (!sel) return;
-  const map = { none: 'animNone', float: 'animFloat', land: 'animLand', 'slide-in': 'animSlideIn', reveal: 'animReveal', rotate: 'animRotate', pulse: 'animPulse' };
-  Array.from(sel.options).forEach(opt => {
-    const k = map[opt.value];
-    if (k) opt.text = getTranslation(k);
+// Localize animation template button labels (icons preserved)
+(function _localizeAnimButtons() {
+  const map = {
+    none:       { key: 'animNone',    icon: '&#10005;' },
+    float:      { key: 'animFloat',   icon: '&#11014;' },
+    land:       { key: 'animLand',    icon: '&#11015;' },
+    rotate:     { key: 'animRotate',  icon: '&#8635;' },
+    'slide-in': { key: 'animSlideIn', icon: '&#8594;' }
+  };
+  document.querySelectorAll('.anim-btn').forEach(btn => {
+    const m = map[btn.dataset.anim];
+    if (m) btn.innerHTML = `${m.icon} ${getTranslation(m.key)}`;
   });
 })();
 
@@ -612,25 +618,35 @@ document.getElementById('reset-scale-btn').addEventListener('click', () => {
   markSceneModified();
 });
 
-// Animation template selection
-document.getElementById('anim-template-select').addEventListener('change', (e) => {
-  if (!selectedObject) return;
-  const template = e.target.value;
-  selectedObject.userData.animTemplate = template;
-  selectedObject.userData.animStartPos = selectedObject.position.clone();
-  selectedObject.userData.animStartScale = selectedObject.scale.clone();
-  selectedObject.userData.animStartRotY = selectedObject.rotation.y;
-  selectedObject.userData.animTime = 0;
-  markSceneModified();
+// Animation template buttons (one click per template)
+document.querySelectorAll('.anim-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (!selectedObject) return;
+    const template = btn.dataset.anim;
+    selectedObject.userData.animTemplate = template;
+    selectedObject.userData.animStartPos = selectedObject.position.clone();
+    selectedObject.userData.animStartScale = selectedObject.scale.clone();
+    selectedObject.userData.animStartRotation = selectedObject.rotation.clone();
+    selectedObject.userData.animStartRotY = selectedObject.rotation.y;
+    selectedObject.userData.animTime = 0;
+
+    document.querySelectorAll('.anim-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const previewBtn = document.getElementById('anim-preview-btn');
+    if (previewBtn) previewBtn.style.display = template === 'none' ? 'none' : 'block';
+
+    markSceneModified();
+  });
 });
 
-// Preview animation - reset time and snap back to start state
+// Preview - reset time and snap back to start state
 document.getElementById('anim-preview-btn').addEventListener('click', () => {
   if (!selectedObject || !selectedObject.userData.animTemplate || selectedObject.userData.animTemplate === 'none') return;
   selectedObject.userData.animTime = 0;
   if (selectedObject.userData.animStartPos) selectedObject.position.copy(selectedObject.userData.animStartPos);
   if (selectedObject.userData.animStartScale) selectedObject.scale.copy(selectedObject.userData.animStartScale);
-  if (typeof selectedObject.userData.animStartRotY === 'number') selectedObject.rotation.y = selectedObject.userData.animStartRotY;
+  if (selectedObject.userData.animStartRotation) selectedObject.rotation.copy(selectedObject.userData.animStartRotation);
 });
 
 // Double-click rename - UUID-safe (popup may outlive selection changes mid-edit)
@@ -680,9 +696,13 @@ function showObjectPopup(obj) {
   if (nameEl) nameEl.textContent = obj.userData.name || obj.userData.modelName || 'Object';
   // Delta-mode: sliders open centered; mousedown captures the live base value
   popupSliders.forEach(s => { s.value = 0; });
-  // Sync animation dropdown to the selected object's saved template
-  const animSel = document.getElementById('anim-template-select');
-  if (animSel) animSel.value = obj.userData.animTemplate || 'none';
+  // Sync animation buttons to the selected object's saved template
+  const currentAnim = obj.userData.animTemplate || 'none';
+  document.querySelectorAll('.anim-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.anim === currentAnim);
+  });
+  const _animPreview = document.getElementById('anim-preview-btn');
+  if (_animPreview) _animPreview.style.display = currentAnim === 'none' ? 'none' : 'block';
   updatePopupPosition();
 }
 
@@ -1276,13 +1296,21 @@ recordBtn.addEventListener('click', async () => {
     'video/webm',
   ].find(type => MediaRecorder.isTypeSupported(type));
 
+  // Bulletproof helper restore — call from every exit path
+  function _restoreRecordingHelpers() {
+    if (gridHelper) gridHelper.visible = gridWasVisible;
+    if (targetGlyph) targetGlyph.visible = glyphWasVisible;
+    if (gizmoRenderer && gizmoRenderer.domElement) gizmoRenderer.domElement.style.display = gizmoDisplay;
+  }
+
   try {
-    mediaRecorder = new MediaRecorder(stream, { 
+    mediaRecorder = new MediaRecorder(stream, {
       mimeType: mimeType,
-      videoBitsPerSecond: 8000000 
+      videoBitsPerSecond: 8000000
     });
   } catch (e) {
     console.error('MediaRecorder not supported', e);
+    _restoreRecordingHelpers();
     alert(getTranslation('mediaRecNotSupported'));
     return;
   }
@@ -1297,6 +1325,9 @@ recordBtn.addEventListener('click', async () => {
   mediaRecorder.onstop = async () => {
     resetRecordingTimer();
 
+    // Restore helpers FIRST so they come back even on early-exit paths (no chunks, errors)
+    _restoreRecordingHelpers();
+
     if (recordedChunks.length === 0) {
       console.log('No chunks recorded');
       return;
@@ -1304,11 +1335,6 @@ recordBtn.addEventListener('click', async () => {
 
     const blob = new Blob(recordedChunks, { type: mimeType });
     const arrayBuffer = await blob.arrayBuffer();
-    
-    // Restore visibility after blob assembled
-    gridHelper.visible = gridWasVisible;
-    targetGlyph.visible = glyphWasVisible;
-    gizmoRenderer.domElement.style.display = gizmoDisplay;
     
     const duration = (Date.now() - recordingStartTime) / 1000;
     disableButtons();
@@ -2409,6 +2435,19 @@ function _clearSceneSilently() {
   updateLayersPanel();
 }
 
+function verifySaveData(sceneData) {
+  const required = [
+    'version', 'camera', 'lens', 'ratio', 'cameraMovement',
+    'lighting', 'objects', 'layout', 'pipeline'
+  ];
+  const missing = required.filter(k => !(k in sceneData));
+  if (missing.length > 0) {
+    console.warn('[Save] Missing fields:', missing);
+  } else {
+    console.log('[Save] All fields present \u2713');
+  }
+}
+
 async function saveScene(saveAs = false) {
   renderer.render(scene, camera);
   const thumbnail = renderer.domElement.toDataURL('image/jpeg', 0.6);
@@ -2433,6 +2472,10 @@ async function saveScene(saveAs = false) {
       entry.animStartPos = obj.userData.animStartPos ? obj.userData.animStartPos.toArray() : null;
       entry.animStartScale = obj.userData.animStartScale ? obj.userData.animStartScale.toArray() : null;
       if (typeof obj.userData.animStartRotY === 'number') entry.animStartRotY = obj.userData.animStartRotY;
+      if (obj.userData.animStartRotation) {
+        const r = obj.userData.animStartRotation;
+        entry.animStartRotation = [r.x, r.y, r.z, r.order || 'XYZ'];
+      }
     }
     objects.push(entry);
   });
@@ -2501,8 +2544,15 @@ async function saveScene(saveAs = false) {
       prompt: pipelineState.prompt,
       aiResultUrl: pipelineState.aiResultUrl,
       upscaleUrl: pipelineState.upscaleUrl
+    },
+
+    counters: {
+      boxCount: boxCount,
+      sphereCount: sphereCount
     }
   };
+
+  verifySaveData(sceneData);
 
   let savePath = currentScenePath;
   if (saveAs || !savePath) {
@@ -2664,9 +2714,21 @@ async function loadScene(filePath) {
         ? new THREE.Vector3().fromArray(obj.animStartScale)
         : mesh.scale.clone();
       if (typeof obj.animStartRotY === 'number') mesh.userData.animStartRotY = obj.animStartRotY;
+      if (Array.isArray(obj.animStartRotation)) {
+        const r = obj.animStartRotation;
+        mesh.userData.animStartRotation = new THREE.Euler(r[0] || 0, r[1] || 0, r[2] || 0, r[3] || 'XYZ');
+      } else {
+        mesh.userData.animStartRotation = mesh.rotation.clone();
+      }
       mesh.userData.animTime = 0;
     }
     scene.add(mesh);
+  }
+
+  // Restore counters (overrides the per-object auto-increment from the loop above)
+  if (data.counters) {
+    if (typeof data.counters.boxCount === 'number') boxCount = data.counters.boxCount;
+    if (typeof data.counters.sphereCount === 'number') sphereCount = data.counters.sphereCount;
   }
 
   if (data.ratio) {
