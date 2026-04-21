@@ -255,7 +255,7 @@ export const translations = {
   }
 };
 
-let currentLang = localStorage.getItem('viewportLanguage') || 'en';
+let currentLang = localStorage.getItem('refluent_lang') || 'en';
 
 export function getTranslation(key) {
   return translations[currentLang][key] || key;
@@ -268,6 +268,6 @@ export function getCurrentLang() {
 export function setLanguage(lang) {
   if (translations[lang]) {
     currentLang = lang;
-    localStorage.setItem('viewportLanguage', lang);
+    localStorage.setItem('refluent_lang', lang);
   }
 }

@@ -1141,71 +1141,152 @@ lensSelect.addEventListener('change', () => {
 // ---- Mission 7: UX Pass ----
 
 // 1. Welcome overlay (first launch)
-if (!localStorage.getItem('first_launch')) {
-  const wSlides = [
-    { titleKey: 'slide1Title', bodyKey: 'slide1Body' },
-    { titleKey: 'slide2Title', bodyKey: 'slide2Body' },
-    { titleKey: 'slide3Title', bodyKey: 'slide3Body' },
-  ];
-  let wSlideIdx = 0;
+const isFirstLaunch = !localStorage.getItem('refluent_lang');
+if (isFirstLaunch) {
+  showLanguageWelcome();
+} else {
+  const savedLang = localStorage.getItem('refluent_lang');
+  if (savedLang) {
+    setLanguage(savedLang);
+    updateUIStrings();
+  }
+}
 
-  const wOverlay = document.createElement('div');
-  wOverlay.id = 'welcome-overlay';
-  wOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:1000;display:flex;align-items:center;justify-content:center;';
+function showLanguageWelcome() {
+  const overlay = document.createElement('div');
+  overlay.id = 'lang-welcome-overlay';
+  overlay.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.95);z-index:2000;
+    display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:32px;`;
 
-  const wCard = document.createElement('div');
-  wCard.style.cssText = 'background:#1e1e1e;border:1px solid #444;border-radius:12px;width:480px;max-width:90vw;padding:40px;color:white;';
+  overlay.innerHTML = `
+    <div style="text-align:center;">
+      <div style="font-size:28px;font-weight:300;color:#fff;
+        letter-spacing:4px;margin-bottom:8px;">REFLUENT</div>
+      <div style="font-size:13px;color:#555;letter-spacing:2px;">
+        CREATIVE VIEWPORT TOOL</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:14px;color:#888;margin-bottom:24px;">
+        Please select your language / 언어를 선택하세요
+      </div>
+      <div style="display:flex;gap:16px;justify-content:center;">
+        <button id="lang-en-btn" style="
+          width:140px;height:56px;background:#1a1a1a;
+          border:1px solid #444;border-radius:6px;
+          color:#fff;font-size:14px;cursor:pointer;
+          letter-spacing:1px;transition:border-color 0.2s;">
+          English
+        </button>
+        <button id="lang-kr-btn" style="
+          width:140px;height:56px;background:#1a1a1a;
+          border:1px solid #444;border-radius:6px;
+          color:#fff;font-size:14px;cursor:pointer;
+          letter-spacing:1px;transition:border-color 0.2s;">
+          한국어
+        </button>
+      </div>
+    </div>`;
 
-  const wCounter = document.createElement('div');
-  wCounter.style.cssText = 'font-size:11px;color:#888;margin-bottom:12px;';
+  document.body.appendChild(overlay);
 
-  const wTitle = document.createElement('h2');
-  wTitle.style.cssText = 'margin:0 0 16px 0;font-size:22px;font-weight:600;';
+  document.getElementById('lang-en-btn').addEventListener('mouseenter', e => e.target.style.borderColor = '#fff');
+  document.getElementById('lang-en-btn').addEventListener('mouseleave', e => e.target.style.borderColor = '#444');
+  document.getElementById('lang-kr-btn').addEventListener('mouseenter', e => e.target.style.borderColor = '#fff');
+  document.getElementById('lang-kr-btn').addEventListener('mouseleave', e => e.target.style.borderColor = '#444');
 
-  const wBody = document.createElement('p');
-  wBody.style.cssText = 'margin:0 0 32px 0;font-size:14px;color:#ccc;line-height:1.6;';
-
-  const wFooter = document.createElement('div');
-  wFooter.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
-
-  const wSkip = document.createElement('span');
-  wSkip.style.cssText = 'font-size:12px;color:#555;cursor:pointer;text-decoration:underline;';
-  wSkip.innerText = getTranslation('welcomeSkip');
-
-  const wNext = document.createElement('button');
-  wNext.style.cssText = 'background:#007bff;color:white;border:none;border-radius:6px;padding:10px 24px;font-size:14px;cursor:pointer;';
-
-  wFooter.appendChild(wSkip);
-  wFooter.appendChild(wNext);
-  wCard.appendChild(wCounter);
-  wCard.appendChild(wTitle);
-  wCard.appendChild(wBody);
-  wCard.appendChild(wFooter);
-  wOverlay.appendChild(wCard);
-  document.body.appendChild(wOverlay);
-
-  const wDismiss = () => {
-    localStorage.setItem('first_launch', 'done');
-    wOverlay.style.display = 'none';
-  };
-
-  const wShowSlide = (idx) => {
-    wCounter.innerText = `${idx + 1} / ${wSlides.length}`;
-    wTitle.innerText = getTranslation(wSlides[idx].titleKey);
-    wBody.innerText = getTranslation(wSlides[idx].bodyKey);
-    wNext.innerText = idx === wSlides.length - 1 ? getTranslation('welcomeFinish') : getTranslation('welcomeNext');
-  };
-
-  wNext.addEventListener('click', () => {
-    if (wSlideIdx < wSlides.length - 1) {
-      wSlideIdx++;
-      wShowSlide(wSlideIdx);
-    } else {
-      wDismiss();
-    }
+  document.getElementById('lang-en-btn').addEventListener('click', () => {
+    localStorage.setItem('refluent_lang', 'en');
+    setLanguage('en');
+    updateUIStrings();
+    overlay.remove();
+    showWalkthrough();
   });
-  wSkip.addEventListener('click', wDismiss);
-  wShowSlide(0);
+
+  document.getElementById('lang-kr-btn').addEventListener('click', () => {
+    localStorage.setItem('refluent_lang', 'kr');
+    setLanguage('kr');
+    updateUIStrings();
+    overlay.remove();
+    showWalkthrough();
+  });
+}
+
+function showWalkthrough() {
+  let slide = 0;
+  const slides = [
+    {
+      en: { title: 'Navigate the Viewport', body: 'Left click + drag to orbit. Right click + drag to pan. Scroll to zoom.' },
+      kr: { title: '뷰포트 탐색', body: '좌클릭 + 드래그로 회전. 우클릭 + 드래그로 이동. 스크롤로 줌.' }
+    },
+    {
+      en: { title: 'Add Objects', body: 'Click Add Box or Add Sphere to place objects. Click to select, then use sliders to move or resize.' },
+      kr: { title: '오브젝트 추가', body: 'Add Box 또는 Add Sphere를 클릭하여 오브젝트를 배치하세요. 클릭하여 선택 후 슬라이더로 조정하세요.' }
+    },
+    {
+      en: { title: 'Record & Render', body: 'Choose a lens and camera movement, press REC to record. Then use the timeline below to generate an AI render.' },
+      kr: { title: '녹화 및 렌더', body: '렌즈와 카메라 움직임을 선택하고 REC를 눌러 녹화하세요. 아래 타임라인으로 AI 렌더를 생성하세요.' }
+    }
+  ];
+
+  const lang = localStorage.getItem('refluent_lang') || 'en';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'walkthrough-overlay';
+  overlay.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.85);z-index:1999;
+    display:flex;align-items:center;justify-content:center;`;
+
+  function renderSlide() {
+    const s = slides[slide][lang];
+    overlay.innerHTML = `
+      <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;
+        padding:40px;width:440px;text-align:center;">
+        <div style="font-size:11px;color:#444;letter-spacing:2px;margin-bottom:20px;">
+          ${slide + 1} / ${slides.length}
+        </div>
+        <div style="font-size:18px;color:#fff;font-weight:300;margin-bottom:16px;">
+          ${s.title}
+        </div>
+        <div style="font-size:13px;color:#777;line-height:1.6;margin-bottom:32px;">
+          ${s.body}
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span id="wt-skip" style="font-size:11px;color:#444;cursor:pointer;
+            text-decoration:underline;">
+            ${lang === 'en' ? 'Skip' : '건너뛰기'}
+          </span>
+          <button id="wt-next" style="
+            background:#1a1a1a;border:1px solid #555;border-radius:4px;
+            color:#fff;font-size:12px;padding:8px 24px;cursor:pointer;">
+            ${slide === slides.length - 1
+              ? (lang === 'en' ? 'Get Started' : '시작하기')
+              : (lang === 'en' ? 'Next →' : '다음 →')}
+          </button>
+        </div>
+      </div>`;
+
+    document.getElementById('wt-next').addEventListener('click', () => {
+      if (slide < slides.length - 1) {
+        slide++;
+        renderSlide();
+      } else {
+        overlay.remove();
+        localStorage.setItem('first_launch', 'done');
+      }
+    });
+
+    document.getElementById('wt-skip').addEventListener('click', () => {
+      overlay.remove();
+      localStorage.setItem('first_launch', 'done');
+    });
+  }
+
+  document.body.appendChild(overlay);
+  renderSlide();
 }
 
 // 2. Tooltips
