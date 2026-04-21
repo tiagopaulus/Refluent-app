@@ -17,23 +17,36 @@
   },
   "devDependencies": {
     "electron": "^28.3.3",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "sharp": "^0.34.5"
   },
   "build": {
-    "appId": "com.example.viewporttool",
+    "appId": "world.paulus.refluent",
     "productName": "Refluent",
+    "icon": "assets/icon.png",
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**/*"
     ],
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "assets/", "to": "assets/" }
+    ],
     "win": {
-      "target": [
-        "nsis"
-      ]
+      "icon": "assets/icon.png",
+      "target": "nsis"
     },
     "mac": {
-      "target": [
-        "dmg"
-      ]
+      "icon": "assets/icon.png",
+      "target": "dmg",
+      "category": "public.app-category.graphics-design"
+    },
+    "linux": {
+      "icon": "assets/icon.png"
     }
   }
 }

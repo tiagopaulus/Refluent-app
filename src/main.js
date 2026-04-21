@@ -103,12 +103,35 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+let splashWindow;
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 480,
+    height: 480,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    center: true,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+  splashWindow.setMenuBarVisibility(false);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'Refluent',
     width: 1280,
     height: 720,
     show: false,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -119,12 +142,27 @@ function createWindow() {
 
   mainWindow.maximize();
   mainWindow.loadFile('src/index.html');
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // Splash sequence handles main window show; ready-to-show no longer auto-shows.
 }
 
 app.whenReady().then(() => {
   buildMenu();
+  createSplashWindow();
   createWindow();
+
+  // Show splash for at least 2.5s, then close it and reveal the main window
+  const splashStart = Date.now();
+  mainWindow.webContents.once('did-finish-load', () => {
+    const elapsed = Date.now() - splashStart;
+    const wait = Math.max(0, 2500 - elapsed);
+    setTimeout(() => {
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }, wait);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
