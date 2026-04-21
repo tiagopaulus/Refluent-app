@@ -118,7 +118,7 @@ const pipelineState = {
 const container = document.getElementById('viewport');
 debug('Container element: ' + (container ? 'FOUND' : 'NULL'));
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a1a);
+scene.background = new THREE.Color(0x080a0c);
 debug('Scene created');
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -128,6 +128,7 @@ debug('Camera created');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x080a0c, 1);
 debug('Renderer created, size: ' + window.innerWidth + 'x' + window.innerHeight);
 try {
   container.appendChild(renderer.domElement);
@@ -139,7 +140,7 @@ try {
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
-const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+const gridHelper = new THREE.GridHelper(20, 20, 0x252a32, 0x1a1e24);
 scene.add(gridHelper);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);

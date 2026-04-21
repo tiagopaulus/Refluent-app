@@ -1,11 +1,41 @@
+/* ============================================================
+   Refluent visual language - design tokens
+   ============================================================ */
+:root {
+  --bg-void: #080a0c;
+  --bg-panel: #111316;
+  --bg-surface: #161a1e;
+  --bg-raised: #1c2026;
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.12);
+  --text-primary: #e8e8e8;
+  --text-secondary: #666c74;
+  --text-disabled: #2e3340;
+  --accent: #4a9fa5;
+  --accent-bright: #6dc4ca;
+  --accent-glow: rgba(74,159,165,0.15);
+  --danger: #c44a4a;
+  --danger-hover: rgba(196,74,74,0.15);
+  --radius-card: 6px;
+  --radius-btn: 4px;
+  --font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-size-ui: 11px;
+  --font-size-label: 10px;
+  --font-size-header: 13px;
+}
+
+* { font-family: var(--font); box-sizing: border-box; }
+
 body, html {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: #1a1a1a;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: var(--font-size-ui);
 }
 
 #viewport {
@@ -22,14 +52,13 @@ body, html {
   left: 0;
   width: 100%;
   height: 60px;
-  background-color: rgba(20, 20, 20, 0.85);
-  backdrop-filter: blur(10px);
+  background-color: var(--bg-panel);
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 20px;
   box-sizing: border-box;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--border);
 }
 
 .toolbar-left, .toolbar-right {
@@ -285,8 +314,7 @@ button:active {
   padding: 4px;
   z-index: 100;
   box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-  backdrop-filter: blur(5px);
-  border: 1px solid #444;
+  border: 1px solid var(--border);
 }
 
 .lang-btn {
@@ -320,8 +348,7 @@ button:active {
   left: 0;
   width: 100%;
   min-height: 60px;
-  background-color: rgba(20, 20, 20, 0.85);
-  backdrop-filter: blur(10px);
+  background-color: var(--bg-panel);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -807,7 +834,6 @@ button:active {
   align-items: center;
   justify-content: center;
   transition: border-color 0.15s, color 0.15s;
-  backdrop-filter: blur(4px);
 }
 .node-ctrl-btn:hover { border-color: #888; color: #fff; }
 
@@ -963,4 +989,340 @@ button:active {
   font-size: 10px;
   color: #333;
   text-align: center;
+}
+
+/* ============================================================
+   Refluent visual language - theme overrides (source-order win)
+   ============================================================ */
+
+/* --- Top toolbar --- */
+.top-toolbar {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.top-toolbar-section {
+  border-color: var(--border) !important;
+}
+.top-toolbar button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  color: var(--text-secondary);
+  font-size: var(--font-size-ui);
+  font-family: var(--font);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.top-toolbar button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--bg-surface);
+}
+.top-toolbar label, .toolbar-group label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-label);
+  letter-spacing: 0.5px;
+}
+
+/* --- Selects + number inputs (lens, ratio, mm) --- */
+#lens-select, #ratio-select, .top-toolbar select {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-btn) !important;
+  color: var(--text-primary) !important;
+  font-size: var(--font-size-ui);
+  font-family: var(--font);
+  padding: 3px 8px;
+  cursor: pointer;
+  outline: none;
+}
+#lens-select:hover, #ratio-select:hover { border-color: var(--border-hover) !important; }
+#lens-mm-input {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-btn);
+  color: var(--text-primary) !important;
+  font-family: var(--font);
+}
+
+/* --- Range sliders --- */
+input[type=range] {
+  accent-color: var(--accent);
+}
+
+/* --- Camera-movement preset radios + descriptions --- */
+.radio-group input[type="radio"] + label {
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-radius: var(--radius-btn);
+  font-family: var(--font);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.radio-group input[type="radio"] + label:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+.radio-group input[type="radio"]:checked + label {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.radio-group input[type="radio"]:checked + label span {
+  color: rgba(255,255,255,0.7) !important;
+}
+
+/* --- Bottom toolbar (Add Box / Sphere / Import / etc) --- */
+.toolbar { background-color: var(--bg-panel); border-top: 1px solid var(--border); }
+.toolbar button, .toolbar-left button, .toolbar-right button {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  color: var(--text-secondary);
+  font-size: var(--font-size-ui);
+  font-family: var(--font);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toolbar button:hover, .toolbar-left button:hover, .toolbar-right button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--bg-raised);
+}
+
+/* --- REC + recording controls (red accent) --- */
+#record-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+#record-btn:hover { border-color: var(--danger); color: var(--danger); }
+#stop-btn { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* --- Cam play / stop / loop buttons --- */
+#cam-play-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+#cam-stop-btn { background: var(--danger); border-color: var(--danger); color: #fff; }
+#cam-loop-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+#cam-loop-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+/* --- Left panel: Layers + Sun --- */
+#layers-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+#layers-header {
+  color: var(--text-secondary);
+  font-size: var(--font-size-label);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font);
+}
+.layer-item {
+  color: var(--text-secondary);
+  font-size: var(--font-size-ui);
+  border-bottom: 1px solid var(--border);
+  padding: 7px 12px;
+  transition: background 0.15s, color 0.15s;
+}
+.layer-item:hover { background: var(--bg-surface); color: var(--text-primary); }
+.layer-item.selected {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-left: 2px solid var(--accent);
+}
+.layer-item-delete { color: var(--text-disabled); transition: color 0.15s; }
+.layer-item-delete:hover { color: var(--danger); }
+
+/* --- Object popup --- */
+.object-popup {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.object-popup-header { border-bottom: 1px solid var(--border); }
+.object-popup-name { color: var(--text-primary); font-size: 12px; font-weight: 500; }
+.axis-label { color: var(--text-secondary); font-size: var(--font-size-label); }
+.popup-reset-btn {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-secondary) !important;
+  font-family: var(--font);
+}
+.popup-reset-btn:hover {
+  color: var(--text-primary) !important;
+  border-color: var(--border-hover) !important;
+}
+
+/* --- Animation buttons --- */
+.anim-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font);
+}
+.anim-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.anim-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+/* --- Node Editor --- */
+#node-panel { background: var(--bg-void); border-left: 1px solid var(--border); }
+.node-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font);
+}
+.node-card:hover { border-color: var(--border-hover); }
+.node-card.node-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+.node-card.node-complete { border-color: rgba(74,159,165,0.3); }
+.node-title-bar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.node-subtitle { color: var(--text-secondary); }
+.node-port-in, .node-port-out {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-hover);
+}
+.node-port-in:hover, .node-port-out:hover {
+  background: var(--accent);
+  border-color: var(--accent-bright);
+}
+.node-ctrl-btn {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.node-ctrl-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+/* --- Simple Mode --- */
+#simple-panel { background: var(--bg-void); border-top: 1px solid var(--border); }
+.step-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-family: var(--font);
+}
+.step-card:hover { border-color: var(--border-hover); }
+.step-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.step-card.complete { border-color: rgba(74,159,165,0.25); }
+.step-card.skipped { opacity: 0.35; border-style: dashed; border-color: var(--border); }
+.step-card .step-header {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-family: var(--font);
+}
+.step-card .step-skip-btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font);
+}
+.step-card .step-skip-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+.step-card.skipped .step-skip-btn {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+/* --- Lens HUD --- */
+#lens-hud {
+  color: rgba(232,232,232,0.25) !important;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+  font-weight: 300;
+  letter-spacing: 1px;
+}
+
+/* --- Navigation hint --- */
+#nav-hint {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  color: var(--text-secondary);
+  font-family: var(--font);
+}
+
+/* --- Preferences modal + welcome overlays --- */
+#prefs-overlay, #lang-welcome-overlay, #walkthrough-overlay, #recent-overlay {
+  background: rgba(8,10,12,0.92) !important;
+}
+#prefs-modal {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.8) !important;
+}
+#prefs-sidebar {
+  background: var(--bg-void) !important;
+  border-right: 1px solid var(--border) !important;
+}
+.prefs-category {
+  color: var(--text-secondary);
+  font-family: var(--font);
+  border-left: 2px solid transparent;
+}
+.prefs-category:hover { color: var(--text-primary); background: var(--bg-surface); }
+.prefs-category.active {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-left-color: var(--accent);
+}
+.prefs-label { color: var(--text-primary); font-family: var(--font); }
+.prefs-sublabel { color: var(--text-secondary); font-family: var(--font); }
+.prefs-section-title { color: var(--text-secondary); font-family: var(--font); }
+.prefs-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  color: var(--text-secondary);
+  font-family: var(--font);
+}
+.prefs-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.prefs-row { border-bottom: 1px solid var(--border); }
+.prefs-path { color: var(--text-disabled); font-family: var(--font); }
+
+/* --- Recent projects cards --- */
+.recent-card {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.recent-card:hover { border-color: var(--accent) !important; }
+.recent-name { color: var(--text-primary); font-family: var(--font); }
+.recent-date { color: var(--text-secondary); font-family: var(--font); }
+
+/* --- Camera movement description spans (rendered inline by renderer.js) --- */
+label[for^="cam-"] span {
+  color: var(--text-disabled) !important;
 }
