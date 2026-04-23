@@ -89,6 +89,15 @@
     "linux": {
       "icon": "assets/icon_with_bg.png"
     },
+    "fileAssociations": [
+      {
+        "ext": "ent",
+        "name": "Refluent Scene",
+        "description": "Refluent 3D Scene File",
+        "icon": "assets/icon_with_bg.png",
+        "role": "Editor"
+      }
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "build-resources"

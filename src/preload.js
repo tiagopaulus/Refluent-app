@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onOpenScene: (callback) => ipcRenderer.on('open-scene', () => callback()),
   onSaveScene: (callback) => ipcRenderer.on('save-scene', () => callback()),
   onSaveSceneAs: (callback) => ipcRenderer.on('save-scene-as', () => callback()),
+  openSceneFromPath: (filePath) => ipcRenderer.invoke('open-scene-from-path', filePath),
+  onOpenSceneFile: (callback) => ipcRenderer.on('open-scene-file', (event, path) => callback(path)),
   // AI provider bridges (renderer never imports provider modules)
   aiVideoRender: (args) => ipcRenderer.invoke('ai-video-render', args),
   aiVideoStatus: (args) => ipcRenderer.invoke('ai-video-status', args),

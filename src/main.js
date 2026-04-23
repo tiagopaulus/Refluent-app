@@ -156,6 +156,25 @@ function createWindow() {
   if (process.env.REFLUENT_DEBUG === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+
+  // Drag & drop .ent files into window
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.executeJavaScript(`
+      document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      document.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const files = Array.from(e.dataTransfer.files);
+        const entFile = files.find(f => f.path && f.path.endsWith('.ent'));
+        if (entFile) {
+          window.electronAPI.openSceneFromPath(entFile.path);
+        }
+      });
+    `);
+  });
   // Splash sequence handles main window show; ready-to-show no longer auto-shows.
 }
 
@@ -191,6 +210,34 @@ app.on('window-all-closed', () => {
   }
 });
 
+// Handle .ent file opened from Windows Explorer (argv)
+const fileArgPath = process.argv.find(arg => typeof arg === 'string' && arg.endsWith('.ent'));
+if (fileArgPath) {
+  app.whenReady().then(() => {
+    if (mainWindow) {
+      mainWindow.webContents.once('did-finish-load', () => {
+        mainWindow.webContents.send('open-scene-file', fileArgPath);
+      });
+    }
+  });
+}
+
+// Handle file open on macOS (open-file event)
+app.on('open-file', (event, openPath) => {
+  event.preventDefault();
+  if (mainWindow) {
+    mainWindow.webContents.send('open-scene-file', openPath);
+  } else {
+    app.whenReady().then(() => {
+      if (mainWindow) {
+        mainWindow.webContents.once('did-finish-load', () => {
+          mainWindow.webContents.send('open-scene-file', openPath);
+        });
+      }
+    });
+  }
+});
+
 // IPC Handler: Pick the MP4 save folder
 ipcMain.handle('select-mp4-folder', async () => {
   return await pickMp4Folder();
@@ -213,6 +260,11 @@ ipcMain.handle('open-scene-dialog', async () => {
     title: 'Open Scene'
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('open-scene-from-path', async (_event, filePath) => {
+  if (mainWindow) mainWindow.webContents.send('open-scene-file', filePath);
+  return true;
 });
 
 ipcMain.handle('write-file', async (_event, filePath, content) => {

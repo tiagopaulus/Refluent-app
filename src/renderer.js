@@ -2900,6 +2900,25 @@ window.electronAPI.onOpenScene(() => openSceneFromDialog());
 window.electronAPI.onSaveScene(() => saveScene(false));
 window.electronAPI.onSaveSceneAs(() => saveScene(true));
 
+window.electronAPI.onOpenSceneFile(async (filePath) => {
+  if (filePath && filePath.endsWith('.ent')) {
+    await loadScene(filePath);
+  }
+});
+
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.items[0]?.type === '') {
+    document.body.style.outline = '2px solid var(--accent)';
+  }
+});
+document.addEventListener('dragleave', () => {
+  document.body.style.outline = 'none';
+});
+document.addEventListener('drop', () => {
+  document.body.style.outline = 'none';
+});
+
 window.addEventListener('keydown', (e) => {
   if (_isTypingTarget()) return;
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's')) {
