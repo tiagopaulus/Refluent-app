@@ -1544,6 +1544,31 @@ const camLoopBtn = document.getElementById('cam-loop-btn');
 const camStopBtn = document.getElementById('cam-stop-btn');
 const camStatus = document.getElementById('cam-status');
 
+// --- Record with Movement toggle ---
+let recordWithMovement = false;
+const recWithMoveBtn = document.getElementById('rec-with-move-btn');
+
+function updateRecWithMoveVisual() {
+  if (recordWithMovement) {
+    recWithMoveBtn.style.background = 'var(--danger)';
+    recWithMoveBtn.style.borderColor = 'var(--danger)';
+    recWithMoveBtn.style.color = '#fff';
+    recWithMoveBtn.title = getTranslation('recWithMoveOn');
+  } else {
+    recWithMoveBtn.style.background = 'transparent';
+    recWithMoveBtn.style.borderColor = 'transparent';
+    recWithMoveBtn.style.color = 'var(--text-secondary)';
+    recWithMoveBtn.title = getTranslation('recWithMoveOff');
+  }
+}
+recWithMoveBtn.innerHTML = '&#9210; Auto-Recording';
+recWithMoveBtn.title = getTranslation('recWithMoveOff');
+
+recWithMoveBtn.addEventListener('click', () => {
+  recordWithMovement = !recordWithMovement;
+  updateRecWithMoveVisual();
+});
+
 camSpeedSlider.addEventListener('input', (e) => {
   camSpeedVal.innerText = parseFloat(e.target.value).toFixed(1);
 });
@@ -1612,6 +1637,15 @@ let dzStartPos = new THREE.Vector3();
 let dzTargetPos = new THREE.Vector3();
 
 function updateCamStatus() {
+  if (recordWithMovement
+      && (camAnimState === 'playing' || camAnimState === 'looping')
+      && mediaRecorder && mediaRecorder.state === 'recording') {
+    camStatus.innerText = '● ' + getTranslation('autoRecording');
+    camStatus.style.color = 'var(--danger)';
+    camStatus.removeAttribute('data-i18n');
+    return;
+  }
+  camStatus.style.color = '';
   if (camAnimState === 'idle') {
     camStatus.innerText = getTranslation('ready');
     camStatus.setAttribute('data-i18n', 'ready');
@@ -1665,7 +1699,13 @@ function startCameraMove() {
   controls.enabled = false;
 }
 
-camPlayBtn.addEventListener('click', startCameraMove);
+camPlayBtn.addEventListener('click', () => {
+  if (recordWithMovement && (!mediaRecorder || mediaRecorder.state === 'inactive')) {
+    recordBtn.click();
+  }
+  startCameraMove();
+  updateCamStatus();
+});
 
 camStopBtn.addEventListener('click', () => {
   if (camAnimState !== 'idle' && camAnimState !== 'stopping') {
@@ -1674,6 +1714,14 @@ camStopBtn.addEventListener('click', () => {
     stopEaseTime = 0;
     camAnimState = 'stopping';
     updateCamStatus();
+  }
+  if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording') {
+    setTimeout(() => {
+      if (mediaRecorder && mediaRecorder.state === 'recording'
+          && !stopBtn.classList.contains('hidden')) {
+        stopBtn.click();
+      }
+    }, 500);
   }
 });
 
@@ -1698,6 +1746,11 @@ updateCameraAnimation = function() {
       controls.update();
       updateCamStatus();
       animClock.stop();
+      if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording') {
+        setTimeout(() => {
+          if (!stopBtn.classList.contains('hidden')) stopBtn.click();
+        }, 500);
+      }
       return false; // tell animate we are idle
     }
     const easeT = easeInOutQuad(t);
@@ -1716,6 +1769,14 @@ updateCameraAnimation = function() {
       camera.position.copy(animStartPos);
       camera.quaternion.copy(animStartQuat);
       controls.target.copy(animStartTarget);
+      if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording') {
+        if (!stopBtn.classList.contains('hidden')) stopBtn.click();
+        setTimeout(() => {
+          if (recordWithMovement && (!mediaRecorder || mediaRecorder.state === 'inactive')) {
+            recordBtn.click();
+          }
+        }, 1500);
+      }
     } else {
       stopStartPos.copy(camera.position);
       stopStartQuat.copy(camera.quaternion);
@@ -2601,6 +2662,7 @@ async function saveScene(saveAs = false) {
     ratio: ratioSel ? ratioSel.value : '16:9',
     targetVisible: document.getElementById('target-popup')?.style.display === 'block',
     originalTargetPosition: originalTargetPosition.toArray(),
+    recordWithMovement: recordWithMovement,
 
     camera: {
       position: camera.position.toArray(),
@@ -2722,6 +2784,12 @@ async function loadScene(filePath) {
     camera.updateProjectionMatrix();
     targetFov = data.camera.fov;
     controls.update();
+  }
+
+  // ---- Record with Movement toggle ----
+  if (typeof data.recordWithMovement === 'boolean') {
+    recordWithMovement = data.recordWithMovement;
+    updateRecWithMoveVisual();
   }
 
   // ---- Target popup visibility ----
