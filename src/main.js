@@ -2,14 +2,24 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fluentFfmpeg = require('fluent-ffmpeg');
-require('dotenv').config();
+
+// AI providers - live in main process so they can use node_modules, fs, env
+const { videoProvider } = require('./providers/videoProvider.js');
+const { imageProvider } = require('./providers/imageProvider.js');
+const { upscaleProvider } = require('./providers/upscaleProvider.js');
+
+// dotenv path differs between dev (project root) and packaged (resourcesPath)
+const dotenvPath = app.isPackaged
+  ? path.join(process.resourcesPath, '.env')
+  : path.join(__dirname, '..', '.env');
+require('dotenv').config({ path: dotenvPath });
 
 // Get the correct path for ffmpeg-static across development and production
 let ffmpegPath = require('ffmpeg-static');
-if (ffmpegPath.includes('app.asar')) {
+if (ffmpegPath && ffmpegPath.includes('app.asar')) {
   ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked');
 }
-fluentFfmpeg.setFfmpegPath(ffmpegPath);
+if (ffmpegPath) fluentFfmpeg.setFfmpegPath(ffmpegPath);
 
 let mainWindow;
 let currentLang = 'en';
@@ -115,7 +125,7 @@ function createSplashWindow() {
     skipTaskbar: true,
     resizable: false,
     center: true,
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    icon: path.join(__dirname, '..', 'assets', 'icon_with_bg.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
@@ -131,7 +141,7 @@ function createWindow() {
     width: 1280,
     height: 720,
     show: false,
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    icon: path.join(__dirname, '..', 'assets', 'icon_with_bg.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -141,7 +151,11 @@ function createWindow() {
   });
 
   mainWindow.maximize();
-  mainWindow.loadFile('src/index.html');
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  // Open DevTools only when explicitly requested via REFLUENT_DEBUG=1
+  if (process.env.REFLUENT_DEBUG === '1') {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
   // Splash sequence handles main window show; ready-to-show no longer auto-shows.
 }
 
@@ -213,6 +227,36 @@ ipcMain.handle('read-file', async (_event, filePath) => {
 ipcMain.handle('read-file-base64', async (_event, filePath) => {
   const buf = await fs.promises.readFile(filePath);
   return buf.toString('base64');
+});
+
+// AI provider IPC handlers (renderer has no direct access to @fal-ai/client)
+ipcMain.handle('ai-video-render', async (_event, { mp4Path, prompt, referenceFrame }) => {
+  try { return { success: true, ...(await videoProvider.render(mp4Path, prompt, referenceFrame)) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-video-status', async (_event, { jobId }) => {
+  try { return { success: true, ...(await videoProvider.checkStatus(jobId)) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-video-cancel', async (_event, { jobId }) => {
+  try { await videoProvider.cancel(jobId); return { success: true }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-image-generate', async (_event, { prompt, referenceImagePath }) => {
+  try { return { success: true, ...(await imageProvider.generate(prompt, referenceImagePath)) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-image-status', async (_event, { jobId }) => {
+  try { return { success: true, ...(await imageProvider.checkStatus(jobId)) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-upscale', async (_event, { inputPath, scale }) => {
+  try { return { success: true, ...(await upscaleProvider.upscale(inputPath, scale)) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-upscale-status', async (_event, { jobId }) => {
+  try { return { success: true, ...(await upscaleProvider.checkStatus(jobId)) }; }
+  catch (err) { return { success: false, error: err.message }; }
 });
 
 // IPC Handler: Open File Dialog (images, etc.)

@@ -19,5 +19,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNewScene: (callback) => ipcRenderer.on('new-scene', () => callback()),
   onOpenScene: (callback) => ipcRenderer.on('open-scene', () => callback()),
   onSaveScene: (callback) => ipcRenderer.on('save-scene', () => callback()),
-  onSaveSceneAs: (callback) => ipcRenderer.on('save-scene-as', () => callback())
+  onSaveSceneAs: (callback) => ipcRenderer.on('save-scene-as', () => callback()),
+  // AI provider bridges (renderer never imports provider modules)
+  aiVideoRender: (args) => ipcRenderer.invoke('ai-video-render', args),
+  aiVideoStatus: (args) => ipcRenderer.invoke('ai-video-status', args),
+  aiVideoCancel: (args) => ipcRenderer.invoke('ai-video-cancel', args),
+  aiImageGenerate: (args) => ipcRenderer.invoke('ai-image-generate', args),
+  aiImageStatus: (args) => ipcRenderer.invoke('ai-image-status', args),
+  aiUpscale: (args) => ipcRenderer.invoke('ai-upscale', args),
+  aiUpscaleStatus: (args) => ipcRenderer.invoke('ai-upscale-status', args)
 });

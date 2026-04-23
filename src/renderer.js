@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getTranslation, setLanguage } from './i18n.js';
+// Providers live in the main process and are invoked via IPC (window.electronAPI.ai*)
 
 // Debug: Write to window object
 window.debugLog = [];
@@ -537,15 +538,16 @@ objectPopup.innerHTML = `
 `;
 document.getElementById('viewport').appendChild(objectPopup);
 
-// Localized labels
-document.getElementById('popup-move-label').innerText = getTranslation('panelMove');
-document.getElementById('popup-resize-label').innerText = getTranslation('panelResize');
-const _animLabelEl = document.getElementById('popup-anim-label');
-if (_animLabelEl) _animLabelEl.innerText = getTranslation('animate').toUpperCase();
-const _animPrevBtn = document.getElementById('anim-preview-btn');
-if (_animPrevBtn) _animPrevBtn.innerHTML = '&#9654; ' + getTranslation('animPreview');
-// Localize animation template button labels (icons preserved)
-(function _localizeAnimButtons() {
+// Localized popup labels - extracted into a function so language changes re-apply them
+function _localizePopup() {
+  const moveLbl = document.getElementById('popup-move-label');
+  if (moveLbl) moveLbl.innerText = getTranslation('panelMove');
+  const resizeLbl = document.getElementById('popup-resize-label');
+  if (resizeLbl) resizeLbl.innerText = getTranslation('panelResize');
+  const animLbl = document.getElementById('popup-anim-label');
+  if (animLbl) animLbl.innerText = getTranslation('animate').toUpperCase();
+  const animPrevBtn = document.getElementById('anim-preview-btn');
+  if (animPrevBtn) animPrevBtn.innerHTML = '&#9654; ' + getTranslation('animPreview');
   const map = {
     none:       { key: 'animNone',    icon: '&#10005;' },
     float:      { key: 'animFloat',   icon: '&#11014;' },
@@ -557,7 +559,8 @@ if (_animPrevBtn) _animPrevBtn.innerHTML = '&#9654; ' + getTranslation('animPrev
     const m = map[btn.dataset.anim];
     if (m) btn.innerHTML = `${m.icon} ${getTranslation(m.key)}`;
   });
-})();
+}
+_localizePopup();
 
 const popupSliders = objectPopup.querySelectorAll('input[type="range"]');
 const sliderBaseValues = {};
@@ -1710,6 +1713,9 @@ function updateUIStrings() {
         el.innerText = getTranslation(key);
     }
   });
+  // Re-apply dynamically-built labels that don't carry data-i18n attributes
+  if (typeof _localizePopup === 'function') _localizePopup();
+  if (typeof updateLayersPanel === 'function') updateLayersPanel();
 }
 
 // Initial UI pass
@@ -3084,10 +3090,17 @@ async function triggerAIRender() {
       <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
     </div>`;
   try {
-    const { videoProvider } = await import('./providers/videoProvider.js');
-    const job = await videoProvider.render(pipelineState.mp4Path, pipelineState.prompt, pipelineState.referenceFrame);
+    const job = await window.electronAPI.aiVideoRender({
+      mp4Path: pipelineState.mp4Path,
+      prompt: pipelineState.prompt,
+      referenceFrame: pipelineState.referenceFrame
+    });
+    if (!job.success) {
+      step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">${job.error || 'Something went wrong.'}</div>`;
+      return;
+    }
     const poll = setInterval(async () => {
-      const status = await videoProvider.checkStatus(job.jobId);
+      const status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
       if (status.status === 'complete') {
         clearInterval(poll);
         pipelineState.aiResultUrl = status.videoUrl;
@@ -3505,10 +3518,13 @@ if (_step6Card) {
         <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
       </div>`;
     try {
-      const { upscaleProvider } = await import('./providers/upscaleProvider.js');
-      const job = await upscaleProvider.upscale(pipelineState.aiResultUrl, 4);
+      const job = await window.electronAPI.aiUpscale({ inputPath: pipelineState.aiResultUrl, scale: 4 });
+      if (!job.success) {
+        step6Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">${job.error || 'Upscale failed.'}</div>`;
+        return;
+      }
       const poll = setInterval(async () => {
-        const status = await upscaleProvider.checkStatus(job.jobId);
+        const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
         if (status.status === 'complete') {
           clearInterval(poll);
           pipelineState.upscaleUrl = status.outputUrl;
@@ -3670,10 +3686,13 @@ function wireNodeInteractions() {
           <div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>
         </div>`;
       try {
-        const { upscaleProvider } = await import('./providers/upscaleProvider.js');
-        const job = await upscaleProvider.upscale(pipelineState.aiResultUrl, 4);
+        const job = await window.electronAPI.aiUpscale({ inputPath: pipelineState.aiResultUrl, scale: 4 });
+        if (!job.success) {
+          nc.innerHTML = `<span style="font-size:9px;color:#c44;">${job.error || 'Upscale failed.'}</span>`;
+          return;
+        }
         const poll = setInterval(async () => {
-          const status = await upscaleProvider.checkStatus(job.jobId);
+          const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
           if (status.status === 'complete') {
             clearInterval(poll);
             pipelineState.upscaleUrl = status.outputUrl;

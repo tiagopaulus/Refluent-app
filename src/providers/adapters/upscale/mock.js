@@ -1,10 +1,6 @@
-// UPSCALE ADAPTER CONTRACT
-// upscale(inputPath, scale) → Promise<{ jobId, status, outputUrl? }>
-// checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', outputUrl?, error? }>
-// cancel(jobId) → Promise<void>
-
-// Mock upscale adapter — simulates Real-ESRGAN with a 4 second delay
-export const MockUpscaleAdapter = {
+// UPSCALE ADAPTER CONTRACT (CommonJS) - simulates Real-ESRGAN with a 4 second delay
+const MockUpscaleAdapter = {
+  _jobs: {},
   async upscale(inputPath, scale) {
     console.log('[MockUpscaleAdapter] upscale called', { inputPath, scale });
     const jobId = 'mock-up-' + Date.now();
@@ -19,6 +15,7 @@ export const MockUpscaleAdapter = {
   },
   async cancel(jobId) {
     delete MockUpscaleAdapter._jobs[jobId];
-  },
-  _jobs: {}
+  }
 };
+
+module.exports = { MockUpscaleAdapter };

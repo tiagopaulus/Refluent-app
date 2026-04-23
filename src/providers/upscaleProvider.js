@@ -1,6 +1,8 @@
 // SWAP THIS IMPORT TO CHANGE UPSCALE MODEL
-import { MockUpscaleAdapter } from './adapters/upscale/mock.js';
-// import { RealEsrganAdapter } from './adapters/upscale/realEsrgan.js';
+const { MockUpscaleAdapter } = require('./adapters/upscale/mock.js');
+// const { RealEsrganAdapter } = require('./adapters/upscale/realEsrgan.js');
 
-export const upscaleProvider = MockUpscaleAdapter;
+const upscaleProvider = MockUpscaleAdapter;
 // To switch: replace MockUpscaleAdapter with RealEsrganAdapter
+
+module.exports = { upscaleProvider };

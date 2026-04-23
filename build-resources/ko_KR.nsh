@@ -1,0 +1,7 @@
+LangString ^SetupCaption ${LANG_KOREAN} "Refluent 설치"
+LangString ^WelcomeText ${LANG_KOREAN} "Refluent 설치 마법사에 오신 것을 환영합니다.$\r$\n$\r$\n이 프로그램은 Refluent를 설치합니다.$\r$\n$\r$\n설치를 계속하려면 다음을 클릭하세요."
+LangString ^FinishText ${LANG_KOREAN} "Refluent 설치가 완료되었습니다.$\r$\n$\r$\n설치 마법사를 닫으려면 마침을 클릭하세요."
+LangString ^UninstallText ${LANG_KOREAN} "이 소프트웨어는 Refluent를 제거합니다."
+LangString ^DirText ${LANG_KOREAN} "Refluent를 설치할 폴더를 선택하세요."
+LangString ^SpaceText ${LANG_KOREAN} "필요한 디스크 공간:"
+LangString ^SpaceAvText ${LANG_KOREAN} "사용 가능한 디스크 공간:"

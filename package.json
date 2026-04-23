@@ -5,8 +5,10 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-builder --win nsis",
-    "build:mac": "electron-builder --mac dmg"
+    "build": "electron-builder --win --x64",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac --x64"
   },
   "dependencies": {
     "@fal-ai/client": "^1.9.5",
@@ -18,14 +20,24 @@
   "devDependencies": {
     "electron": "^28.3.3",
     "electron-builder": "^24.9.1",
+    "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5"
   },
   "build": {
     "appId": "world.paulus.refluent",
     "productName": "Refluent",
-    "icon": "assets/icon.png",
+    "copyright": "Copyright © 2026 PAULUS",
+    "icon": "assets/icon_with_bg.png",
+    "asar": true,
     "asarUnpack": [
-      "**/node_modules/ffmpeg-static/**/*"
+      "**/node_modules/ffmpeg-static/**/*",
+      "src/lib/**/*",
+      "src/index.html",
+      "src/renderer.js",
+      "src/i18n.js",
+      "src/style.css",
+      "src/splash.html",
+      "src/splash-video.mp4"
     ],
     "files": [
       "src/**/*",
@@ -34,19 +46,52 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "assets/", "to": "assets/" }
+      {
+        "from": "assets/",
+        "to": "assets/"
+      }
     ],
     "win": {
-      "icon": "assets/icon.png",
-      "target": "nsis"
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "publisherName": "PAULUS"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Refluent",
+      "language": "1042",
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "en_US",
+        "ko_KR"
+      ],
+      "include": "build-resources/installer.nsh"
     },
     "mac": {
-      "icon": "assets/icon.png",
+      "icon": "assets/icon_with_bg.png",
       "target": "dmg",
       "category": "public.app-category.graphics-design"
     },
     "linux": {
-      "icon": "assets/icon.png"
+      "icon": "assets/icon_with_bg.png"
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build-resources"
     }
   }
 }

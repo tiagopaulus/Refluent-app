@@ -1,10 +1,6 @@
-// IMAGE ADAPTER CONTRACT
-// generate(prompt, referenceImagePath) → Promise<{ jobId, status, imageUrl? }>
-// checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', imageUrl?, error? }>
-// cancel(jobId) → Promise<void>
-
-// Mock image adapter — simulates Nanobanana with a 3 second delay
-export const MockImageAdapter = {
+// IMAGE ADAPTER CONTRACT (CommonJS) - simulates Nanobanana with a 3 second delay
+const MockImageAdapter = {
+  _jobs: {},
   async generate(prompt, referenceImagePath) {
     console.log('[MockImageAdapter] generate called', { prompt, referenceImagePath });
     const jobId = 'mock-img-' + Date.now();
@@ -19,6 +15,7 @@ export const MockImageAdapter = {
   },
   async cancel(jobId) {
     delete MockImageAdapter._jobs[jobId];
-  },
-  _jobs: {}
+  }
 };
+
+module.exports = { MockImageAdapter };

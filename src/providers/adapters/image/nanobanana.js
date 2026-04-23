@@ -1,14 +1,9 @@
-// IMAGE ADAPTER CONTRACT
-// generate(prompt, referenceImagePath) → Promise<{ jobId, status, imageUrl? }>
-// checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', imageUrl?, error? }>
-// cancel(jobId) → Promise<void>
-
+// IMAGE ADAPTER CONTRACT (CommonJS)
 const API_KEY = process.env.NANOBANANA_API_KEY || '';
-const API_URL = 'https://api.nanobanana.ai/v1'; // update when confirmed
+const API_URL = 'https://api.nanobanana.ai/v1';
 
-export const NanobananaAdapter = {
+const NanobananaAdapter = {
   async generate(prompt, referenceImagePath) {
-    // TODO: implement when API key is available
     throw new Error('NanobananaAdapter: not yet implemented');
   },
   async checkStatus(jobId) {
@@ -18,3 +13,5 @@ export const NanobananaAdapter = {
     throw new Error('NanobananaAdapter: not yet implemented');
   }
 };
+
+module.exports = { NanobananaAdapter };

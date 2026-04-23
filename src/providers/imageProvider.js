@@ -1,6 +1,8 @@
 // SWAP THIS IMPORT TO CHANGE IMAGE MODEL
-import { MockImageAdapter } from './adapters/image/mock.js';
-// import { NanobananaAdapter } from './adapters/image/nanobanana.js';
+const { MockImageAdapter } = require('./adapters/image/mock.js');
+// const { NanobananaAdapter } = require('./adapters/image/nanobanana.js');
 
-export const imageProvider = MockImageAdapter;
+const imageProvider = MockImageAdapter;
 // To switch: replace MockImageAdapter with NanobananaAdapter
+
+module.exports = { imageProvider };

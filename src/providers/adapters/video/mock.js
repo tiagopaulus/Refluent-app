@@ -1,10 +1,10 @@
-// VIDEO ADAPTER CONTRACT
-// render(mp4Path, prompt, referenceFramePath) → Promise<{ jobId, status, videoUrl? }>
-// checkStatus(jobId) → Promise<{ status: 'pending'|'complete'|'error', videoUrl?, error? }>
-// cancel(jobId) → Promise<void>
+// VIDEO ADAPTER CONTRACT (CommonJS)
+// render(mp4Path, prompt, referenceFramePath) -> Promise<{ jobId, status, videoUrl? }>
+// checkStatus(jobId) -> Promise<{ status: 'pending'|'complete'|'error', videoUrl?, error? }>
+// cancel(jobId) -> Promise<void>
 
-// Mock video adapter — simulates Seedance with a 5 second delay
-export const MockVideoAdapter = {
+const MockVideoAdapter = {
+  _jobs: {},
   async render(mp4Path, prompt, referenceFramePath) {
     console.log('[MockVideoAdapter] render called', { mp4Path, prompt, referenceFramePath });
     const jobId = 'mock-vid-' + Date.now();
@@ -19,6 +19,7 @@ export const MockVideoAdapter = {
   },
   async cancel(jobId) {
     delete MockVideoAdapter._jobs[jobId];
-  },
-  _jobs: {}
+  }
 };
+
+module.exports = { MockVideoAdapter };

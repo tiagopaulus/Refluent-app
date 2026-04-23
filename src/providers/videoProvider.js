@@ -1,5 +1,8 @@
-// SWAP THIS IMPORT TO CHANGE VIDEO MODEL
-import { SeedanceAdapter } from './adapters/video/seedance.js';
-// import { MockVideoAdapter } from './adapters/video/mock.js';
+// SWAP THIS LINE TO CHANGE VIDEO MODEL
+const { MockVideoAdapter } = require('./adapters/video/mock.js');
+// const { SeedanceAdapter } = require('./adapters/video/seedance.js');
 
-export const videoProvider = SeedanceAdapter;
+const videoProvider = MockVideoAdapter;
+// To switch: replace MockVideoAdapter with SeedanceAdapter
+
+module.exports = { videoProvider };
