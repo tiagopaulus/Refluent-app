@@ -1181,12 +1181,13 @@ document.getElementById('add-box-btn').addEventListener('click', () => {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const material = new THREE.MeshStandardMaterial({ color: 0x007bff, roughness: 0.4 });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.y = 0.5;
+  mesh.position.set(0, 0.5, 0);
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Box";
   mesh.userData.type = "box";
   boxCount++;
   mesh.userData.name = "Box" + boxCount;
+  mesh.userData.animStartPos = mesh.position.clone();
   scene.add(mesh);
   updateLayersPanel();
   markSceneModified();
@@ -1196,13 +1197,13 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
   const geometry = new THREE.SphereGeometry(0.6, 32, 32);
   const material = new THREE.MeshStandardMaterial({ color: 0xff3366, roughness: 0.4 });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.y = 0.6;
-  mesh.position.x = 2;
+  mesh.position.set(0, 0.5, 0);
   mesh.userData.isUserObject = true;
   mesh.userData.modelName = "Sphere";
   mesh.userData.type = "sphere";
   sphereCount++;
   mesh.userData.name = "Sphere" + sphereCount;
+  mesh.userData.animStartPos = mesh.position.clone();
   scene.add(mesh);
   updateLayersPanel();
   markSceneModified();
@@ -1235,24 +1236,22 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
 
   const onLoad = (object) => {
     const root = object.scene || object;
-    
-    // Auto-center and scale
+
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3()).length();
     const center = box.getCenter(new THREE.Vector3());
-    
-    // Center native bounds securely to pivot
+
     root.position.x -= center.x;
     root.position.y -= center.y;
     root.position.z -= center.z;
-    
+
     const wrapper = new THREE.Group();
     wrapper.add(root);
 
-    const scale =  5 / size;
+    const scale = 5 / size;
     wrapper.scale.set(scale, scale, scale);
-    wrapper.position.y += 2.5; 
-    
+    wrapper.position.y += 2.5;
+
     wrapper.userData.isUserObject = true;
     wrapper.userData.modelName = nameWithoutExt;
     wrapper.userData.type = 'imported';
@@ -1263,6 +1262,7 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
     wrapper.userData.name = nameWithoutExt
       ? nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)
       : 'Model';
+    wrapper.userData.animStartPos = wrapper.position.clone();
     scene.add(wrapper);
     updateLayersPanel();
     markSceneModified();
