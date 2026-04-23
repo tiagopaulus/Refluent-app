@@ -50,6 +50,10 @@ body, html {
   outline: 1px solid var(--accent);
   outline-offset: -2px;
 }
+
+#sun-drag-handle:active > div {
+  background: rgba(74,159,165,0.7) !important;
+}
 #viewport.drag-over::after {
   content: 'Drop 3D model here';
   position: absolute;
@@ -948,7 +952,7 @@ button:active {
 #layers-panel {
   position: absolute;
   left: 16px;
-  top: 168px;
+  top: 220px;
   width: 180px;
   max-height: calc(100vh - 240px);
   overflow-y: auto;

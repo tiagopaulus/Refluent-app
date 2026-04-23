@@ -150,7 +150,6 @@ const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-dirLight.position.set(10, 20, 10);
 scene.add(dirLight);
 
 const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
@@ -168,7 +167,7 @@ container.appendChild(gizmoRenderer.domElement);
 
 const sunControlEl = document.createElement('div');
 sunControlEl.id = 'sun-btn';
-sunControlEl.style.cssText = 'position:absolute;left:16px;top:108px;width:64px;height:64px;z-index:100;cursor:crosshair;';
+sunControlEl.style.cssText = 'position:absolute;left:16px;top:95px;width:64px;height:64px;z-index:100;cursor:crosshair;';
 const sunPreviewCanvas = document.createElement('canvas');
 sunPreviewCanvas.id = 'sun-preview';
 sunPreviewCanvas.width = 64;
@@ -180,7 +179,7 @@ container.appendChild(sunControlEl);
 const sunResetEl = document.createElement('div');
 sunResetEl.id = 'sun-reset';
 sunResetEl.setAttribute('data-i18n', 'resetLight');
-sunResetEl.style.cssText = 'position:absolute;left:16px;top:182px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
+sunResetEl.style.cssText = 'position:absolute;left:16px;top:168px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
 container.appendChild(sunResetEl);
 
 const origin = new THREE.Vector3(0, 0, 0);
@@ -224,23 +223,26 @@ function drawSunPreview() {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, 64, 64);
+
   // Draw sphere
   const grad = ctx.createRadialGradient(26, 26, 2, 32, 32, 20);
-  grad.addColorStop(0, '#555');
-  grad.addColorStop(1, '#1a1a1a');
+  grad.addColorStop(0, '#2a3040');
+  grad.addColorStop(1, '#080a0c');
   ctx.beginPath();
   ctx.arc(32, 32, 20, 0, Math.PI * 2);
   ctx.fillStyle = grad;
   ctx.fill();
-  // Project dirLight direction onto sphere surface
-  const dir = dirLight.position.clone().normalize();
-  const dotX = 32 + dir.x * 18;
-  const dotY = 32 - dir.y * 18;
-  // Draw light dot
+
+  // Use azimuth and elevation directly — not dirLight.position
+  // azimuth 0→1 maps dot left→right on sphere (X axis in preview)
+  // elevation 0→1 maps dot bottom→top on sphere (Y axis in preview)
+  const dotX = 32 + (sunAzimuth - 0.5) * 2 * 16; // -16 to +16
+  const dotY = 32 - (sunElevation - 0.3) * 2 * 16; // maps elevation to vertical
+
   ctx.beginPath();
-  ctx.arc(dotX, dotY, 5, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffe066';
-  ctx.shadowColor = '#ffe066';
+  ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#6dc4ca';
+  ctx.shadowColor = '#4a9fa5';
   ctx.shadowBlur = 8;
   ctx.fill();
   ctx.shadowBlur = 0;
@@ -1939,39 +1941,123 @@ window.electronAPI.onSetLanguage((lang) => {
 
 // ---- Sun Light Drag Control ----
 const sunBtn = document.getElementById('sun-preview');
+const sunContainer = document.getElementById('sun-btn');
 const sunReset = document.getElementById('sun-reset');
-let sunDragging = false;
 
-const defaultLightPos = { x: 10, y: 20, z: 10 };
-
-document.getElementById('sun-btn').title = getTranslation('sunTooltip');
+sunContainer.title = getTranslation('sunTooltip');
 sunReset.innerText = getTranslation('resetLight');
 
-sunBtn.addEventListener('mousedown', () => {
+// Azimuth slider below the sun preview
+const sunDragHandle = document.createElement('div');
+sunDragHandle.id = 'sun-drag-handle';
+sunDragHandle.style.cssText = 'position:absolute;left:16px;top:185px;width:160px;height:20px;display:flex;align-items:center;cursor:ew-resize;z-index:101;';
+sunDragHandle.innerHTML = `
+  <div id="sun-handle-track" style="position:relative;width:100%;height:3px;background:rgba(255,255,255,0.12);border-radius:3px;">
+    <div id="sun-handle-thumb" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#c8cdd4;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.6);cursor:ew-resize;transition:background 0.15s, transform 0.1s;"></div>
+  </div>`;
+document.getElementById('viewport').appendChild(sunDragHandle);
+
+const _sunThumb = sunDragHandle.querySelector('#sun-handle-thumb');
+const _sunTrack = sunDragHandle.querySelector('#sun-handle-track');
+
+// Single source of truth: two angles drive the light position.
+let sunAzimuth = 0.5;    // 0..1 → 0°..360° horizontal rotation
+let sunElevation = 0.6;  // 0..1 → low..high (maps to Y height)
+const SUN_RADIUS = 15;
+let thumbPercent = 0.5;  // slider visual; always mirrored from sunAzimuth
+
+function updateThumbPosition() {
+  if (!_sunThumb || !_sunTrack) return;
+  _sunThumb.style.left = (thumbPercent * _sunTrack.offsetWidth) + 'px';
+}
+
+function applySunAngles() {
+  const azimuthRad = sunAzimuth * Math.PI * 2;
+  const elevationY = 2 + sunElevation * 18; // Y from 2 to 20
+  dirLight.position.set(
+    Math.sin(azimuthRad) * SUN_RADIUS,
+    elevationY,
+    Math.cos(azimuthRad) * SUN_RADIUS
+  );
+  dirLight.target.updateMatrixWorld();
+  thumbPercent = sunAzimuth;
+  updateThumbPosition();
+}
+
+let sunDragging = false;
+let sunDragType = null; // 'slider' | 'free'
+let sliderDragStartX = 0;
+let sliderDragStartPercent = 0.5;
+let mouseDragStartX = 0;
+let mouseDragStartY = 0;
+let mouseDragStartAzimuth = 0;
+let mouseDragStartElevation = 0;
+
+sunDragHandle.addEventListener('mouseenter', () => {
+  _sunThumb.style.background = '#ffffff';
+});
+sunDragHandle.addEventListener('mouseleave', () => {
+  if (!sunDragging) _sunThumb.style.background = '#c8cdd4';
+});
+
+sunDragHandle.addEventListener('mousedown', (e) => {
+  e.stopPropagation();
   sunDragging = true;
+  sunDragType = 'slider';
+  sliderDragStartX = e.clientX;
+  sliderDragStartPercent = sunAzimuth;
+  _sunThumb.style.background = '#ffffff';
+  _sunThumb.style.transform = 'translate(-50%, -50%) scale(1.15)';
+});
+
+sunBtn.addEventListener('mousedown', (e) => {
+  e.stopPropagation();
+  sunDragging = true;
+  sunDragType = 'free';
+  mouseDragStartX = e.clientX;
+  mouseDragStartY = e.clientY;
+  mouseDragStartAzimuth = sunAzimuth;
+  mouseDragStartElevation = sunElevation;
   sunBtn.style.outline = '2px solid rgba(255,255,255,0.4)';
 });
 
+applySunAngles();
+
 window.addEventListener('mousemove', (e) => {
   if (!sunDragging) return;
-  const canvas = renderer.domElement;
-  const rect = canvas.getBoundingClientRect();
-  const x = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
-  const y = -((e.clientY - rect.top) / rect.height - 0.5) * 2;
-  const vec = new THREE.Vector3(x * 10, y * 10, -1).normalize().multiplyScalar(10);
-  dirLight.position.set(vec.x, vec.y, vec.z);
-  dirLight.target.updateMatrixWorld();
+
+  if (sunDragType === 'slider') {
+    const trackEl = document.getElementById('sun-handle-track');
+    const trackWidth = trackEl ? trackEl.offsetWidth : 160;
+    const delta = (e.clientX - sliderDragStartX) / (trackWidth * 0.8);
+    sunAzimuth = Math.max(0, Math.min(1, sliderDragStartPercent + delta));
+    applySunAngles();
+  } else if (sunDragType === 'free') {
+    const sensitivity = 0.004;
+    const dx = (e.clientX - mouseDragStartX) * sensitivity;
+    const dy = (e.clientY - mouseDragStartY) * sensitivity;
+    sunAzimuth = Math.max(0, Math.min(1, mouseDragStartAzimuth + dx));
+    sunElevation = Math.max(0, Math.min(1, mouseDragStartElevation - dy));
+    applySunAngles();
+  }
 });
 
 window.addEventListener('mouseup', () => {
-  if (sunDragging) markSceneModified();
-  sunDragging = false;
-  sunBtn.style.outline = 'none';
+  if (sunDragging) {
+    markSceneModified();
+    sunDragging = false;
+    sunDragType = null;
+    _sunThumb.style.background = '#c8cdd4';
+    _sunThumb.style.transform = 'translate(-50%, -50%) scale(1)';
+    sunBtn.style.outline = 'none';
+  }
 });
 
 sunReset.addEventListener('click', () => {
-  dirLight.position.set(defaultLightPos.x, defaultLightPos.y, defaultLightPos.z);
-  dirLight.target.updateMatrixWorld();
+  sunAzimuth = 0.5;
+  sunElevation = 0.6;
+  applySunAngles();
+  markSceneModified();
 });
 
 // ---- Aspect Ratio Safe Frame ----
@@ -2914,8 +3000,15 @@ async function loadScene(filePath) {
   // ---- Lighting ----
   if (data.lighting) {
     if (data.lighting.dirLightPosition) {
-      dirLight.position.fromArray(data.lighting.dirLightPosition);
-      dirLight.target.updateMatrixWorld();
+      const p = data.lighting.dirLightPosition;
+      // Reverse-engineer azimuth and elevation from saved position
+      const x = p[0], y = p[1], z = p[2];
+      const radius = Math.sqrt(x*x + z*z);
+      // Azimuth: atan2(x, z) normalized to 0-1
+      sunAzimuth = ((Math.atan2(x, z) / (Math.PI * 2)) + 1) % 1;
+      // Elevation: reverse of (2 + elevation * 18)
+      sunElevation = Math.max(0, Math.min(1, (y - 2) / 18));
+      applySunAngles();
     }
     if (data.lighting.dirLightIntensity != null) dirLight.intensity = data.lighting.dirLightIntensity;
     if (fillLight && data.lighting.fillLightPosition) fillLight.position.fromArray(data.lighting.fillLightPosition);
