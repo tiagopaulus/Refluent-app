@@ -1072,22 +1072,22 @@ window.addEventListener('keyup', (e) => {
   }
 });
 
-document.getElementById('clear-scene-btn').addEventListener('click', () => {
-  if (confirm(getTranslation('confirmClearScene'))) {
-    const toRemove = scene.children.filter(c => c.userData.isUserObject);
-    toRemove.forEach(obj => scene.remove(obj));
-    if (selectedObject) {
-      selectedObject = null;
-      scalePanel.classList.add('hidden');
-      hideObjectPopup();
-    }
-    const targetPopup = document.getElementById('target-popup');
-    if (targetPopup) targetPopup.style.display = 'none';
-    const targetMarker = document.getElementById('target-marker');
-    if (targetMarker) targetMarker.style.display = 'none';
-    updateLayersPanel();
-    markSceneModified();
+document.getElementById('clear-scene-btn').addEventListener('click', async () => {
+  const proceed = await checkUnsavedBeforeAction('clear the scene');
+  if (!proceed) return;
+  const toRemove = scene.children.filter(c => c.userData.isUserObject);
+  toRemove.forEach(obj => scene.remove(obj));
+  if (selectedObject) {
+    selectedObject = null;
+    scalePanel.classList.add('hidden');
+    hideObjectPopup();
   }
+  const targetPopup = document.getElementById('target-popup');
+  if (targetPopup) targetPopup.style.display = 'none';
+  const targetMarker = document.getElementById('target-marker');
+  if (targetMarker) targetMarker.style.display = 'none';
+  updateLayersPanel();
+  markSceneModified();
 });
 
 function getMouseNDC(event) {
@@ -2385,9 +2385,22 @@ function showWalkthrough() {
 // ---- Mission I: Auto Save ----
 let _autosaveTimer = null;
 let sceneModifiedSinceLastSave = false;
+let hasUnsavedChanges = false;
 
 function markSceneModified() {
+  hasUnsavedChanges = true;
   sceneModifiedSinceLastSave = true;
+  window.electronAPI.setUnsavedChanges(true);
+  updateWindowTitle();
+}
+
+async function checkUnsavedBeforeAction(actionName) {
+  if (!hasUnsavedChanges) return true;
+  const sceneName = currentSceneName || 'Untitled';
+  const result = await window.electronAPI.showUnsavedDialog(sceneName, actionName);
+  if (result === 0) return await saveScene(false);
+  if (result === 1) return true;
+  return false;
 }
 
 async function performAutosave() {
@@ -2684,9 +2697,15 @@ window.addEventListener('keydown', (e) => {
 let currentSceneName = null;
 let currentScenePath = null;
 
+// Expose scene name to main process for the pre-close dialog.
+Object.defineProperty(window, 'currentSceneName', {
+  get() { return currentSceneName; }
+});
+
 function updateWindowTitle() {
   const name = currentSceneName || 'Untitled';
-  document.title = `${name} \u2014 Refluent`;
+  const unsaved = hasUnsavedChanges ? ' \u2022' : '';
+  document.title = `${name}${unsaved} \u2014 Refluent`;
 }
 updateWindowTitle();
 
@@ -2868,7 +2887,7 @@ async function saveScene(saveAs = false) {
   let savePath = currentScenePath;
   if (saveAs || !savePath) {
     savePath = await window.electronAPI.saveSceneDialog(currentSceneName || 'Untitled');
-    if (!savePath) return;
+    if (!savePath) return false;
     currentScenePath = savePath;
     currentSceneName = savePath.split(/[\\/]/).pop().replace(/\.ent$/i, '');
     sceneData.name = currentSceneName;
@@ -2876,12 +2895,16 @@ async function saveScene(saveAs = false) {
 
   try {
     await window.electronAPI.writeFile(savePath, JSON.stringify(sceneData, null, 2));
+    hasUnsavedChanges = false;
+    sceneModifiedSinceLastSave = false;
+    window.electronAPI.setUnsavedChanges(false);
     updateWindowTitle();
     addToRecentScenes(savePath, sceneData.name, thumbnail);
-    sceneModifiedSinceLastSave = false;
     showToast(`Scene saved \u2014 ${sceneData.name}.ent`);
+    return true;
   } catch (err) {
     showToast('Save failed: ' + err.message);
+    return false;
   }
 }
 
@@ -3146,11 +3169,13 @@ async function loadScene(filePath) {
 
   currentScenePath = filePath;
   currentSceneName = data.name || filePath.split(/[\\/]/).pop().replace(/\.ent$/i, '');
+  hasUnsavedChanges = false;
+  sceneModifiedSinceLastSave = false;
+  window.electronAPI.setUnsavedChanges(false);
   updateWindowTitle();
   updateLayersPanel();
   syncNodeEditor();
   addToRecentScenes(filePath, currentSceneName, data.thumbnail);
-  sceneModifiedSinceLastSave = false;
   showToast(`Scene loaded \u2014 ${currentSceneName}.ent`);
 }
 
@@ -3158,6 +3183,8 @@ async function newScene() {
   _clearSceneSilently();
   currentScenePath = null;
   currentSceneName = null;
+  hasUnsavedChanges = false;
+  window.electronAPI.setUnsavedChanges(false);
   updateWindowTitle();
 }
 
@@ -3235,10 +3262,18 @@ function showRecentProjects() {
   });
 }
 
-window.electronAPI.onNewScene(() => newScene());
+window.electronAPI.onNewScene(async () => {
+  const proceed = await checkUnsavedBeforeAction('create a new scene');
+  if (!proceed) return;
+  newScene();
+});
 window.electronAPI.onOpenScene(() => openSceneFromDialog());
 window.electronAPI.onSaveScene(() => saveScene(false));
 window.electronAPI.onSaveSceneAs(() => saveScene(true));
+window.electronAPI.onSaveAndQuit(async () => {
+  const saved = await saveScene(false);
+  if (saved) window.electronAPI.confirmQuit();
+});
 
 window.electronAPI.onOpenSceneFile(async (filePath) => {
   if (filePath && filePath.endsWith('.ent')) {

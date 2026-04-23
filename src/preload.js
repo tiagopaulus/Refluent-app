@@ -29,5 +29,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiImageGenerate: (args) => ipcRenderer.invoke('ai-image-generate', args),
   aiImageStatus: (args) => ipcRenderer.invoke('ai-image-status', args),
   aiUpscale: (args) => ipcRenderer.invoke('ai-upscale', args),
-  aiUpscaleStatus: (args) => ipcRenderer.invoke('ai-upscale-status', args)
+  aiUpscaleStatus: (args) => ipcRenderer.invoke('ai-upscale-status', args),
+  // Unsaved changes / quit flow
+  setUnsavedChanges: (hasChanges) => ipcRenderer.invoke('set-unsaved-changes', hasChanges),
+  onRequestSaveCheck: (callback) => ipcRenderer.on('request-save-check', callback),
+  respondSaveCheck: (response) => ipcRenderer.invoke('respond-save-check', response),
+  onSaveAndQuit: (callback) => ipcRenderer.on('save-and-quit', () => callback()),
+  confirmQuit: () => ipcRenderer.invoke('confirm-quit'),
+  showUnsavedDialog: (sceneName, action) => ipcRenderer.invoke('show-unsaved-dialog', sceneName, action)
 });

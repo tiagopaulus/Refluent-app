@@ -23,6 +23,8 @@ if (ffmpegPath) fluentFfmpeg.setFfmpegPath(ffmpegPath);
 
 let mainWindow;
 let currentLang = 'en';
+let unsavedChanges = false;
+let allowClose = false;
 
 async function pickMp4Folder() {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -152,6 +154,30 @@ function createWindow() {
 
   mainWindow.maximize();
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  mainWindow.on('close', async (e) => {
+    if (allowClose || !unsavedChanges) return;
+    e.preventDefault();
+    const sceneName = await mainWindow.webContents.executeJavaScript(
+      'window.currentSceneName || "Untitled"'
+    );
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      title: 'Unsaved Changes',
+      message: `Do you want to save the changes to "${sceneName}" before quitting?`,
+      detail: 'Your changes will be lost if you don\'t save them.',
+      buttons: ['Save', 'Don\'t Save', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true
+    });
+    if (response === 0) {
+      mainWindow.webContents.send('save-and-quit');
+    } else if (response === 1) {
+      allowClose = true;
+      mainWindow.close();
+    }
+  });
   // Open DevTools only when explicitly requested via REFLUENT_DEBUG=1
   if (process.env.REFLUENT_DEBUG === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -239,6 +265,29 @@ app.on('open-file', (event, openPath) => {
 });
 
 // IPC Handler: Pick the MP4 save folder
+ipcMain.handle('set-unsaved-changes', (_event, hasChanges) => {
+  unsavedChanges = hasChanges;
+});
+
+ipcMain.handle('confirm-quit', () => {
+  allowClose = true;
+  if (mainWindow) mainWindow.close();
+});
+
+ipcMain.handle('show-unsaved-dialog', async (_event, sceneName, action) => {
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: 'Unsaved Changes',
+    message: `Do you want to save "${sceneName}" before you ${action}?`,
+    detail: 'Your changes will be lost if you don\'t save them.',
+    buttons: ['Save', 'Don\'t Save', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true
+  });
+  return response;
+});
+
 ipcMain.handle('select-mp4-folder', async () => {
   return await pickMp4Folder();
 });
