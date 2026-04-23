@@ -1162,6 +1162,10 @@ input[type=range] {
   border: 1px solid var(--border) !important;
   color: var(--text-secondary) !important;
   font-family: var(--font);
+  font-size: 11px;
+  padding: 5px;
+  border-radius: 3px;
+  cursor: pointer;
 }
 .popup-reset-btn:hover {
   color: var(--text-primary) !important;

@@ -270,6 +270,7 @@ function animate() {
   gizmoCamera.lookAt(0, 0, 0);
   gizmoRenderer.render(gizmoScene, gizmoCamera);
   drawSunPreview();
+  updateTargetMarker();
 }
 debug('Calling animate()...');
 try {
@@ -319,65 +320,157 @@ let isSettingTarget = false;
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 const setTargetBtn = document.getElementById('set-target-btn');
-const clearTargetBtn = document.getElementById('clear-target-btn');
+const originalTargetPosition = new THREE.Vector3();
 
-const targetPanel = document.getElementById('target-panel');
-const targetPosX = document.getElementById('target-pos-x');
-const targetPosY = document.getElementById('target-pos-y');
-const targetPosZ = document.getElementById('target-pos-z');
-const targetPosXVal = document.getElementById('target-pos-x-val');
-const targetPosYVal = document.getElementById('target-pos-y-val');
-const targetPosZVal = document.getElementById('target-pos-z-val');
-const targetResetBtn = document.getElementById('target-reset-btn');
-const targetClearBtn = document.getElementById('target-clear-btn');
-
-const updateTargetUI = () => {
-  if (!targetGlyph.visible) return;
-  const tx = controls.target.x;
-  const ty = controls.target.y;
-  const tz = controls.target.z;
-  targetPosX.value = tx;
-  targetPosY.value = ty;
-  targetPosZ.value = tz;
-  targetPosXVal.innerText = tx.toFixed(1);
-  targetPosYVal.innerText = ty.toFixed(1);
-  targetPosZVal.innerText = tz.toFixed(1);
-};
-
-const handleTargetInput = (axis, value) => {
-  if (!targetGlyph.visible) return;
-  let val = parseFloat(value);
-  controls.target[axis] = val;
-  targetGlyph.position[axis] = val;
-  if (axis === 'x') targetPosXVal.innerText = val.toFixed(1);
-  if (axis === 'y') targetPosYVal.innerText = val.toFixed(1);
-  if (axis === 'z') targetPosZVal.innerText = val.toFixed(1);
-};
-
-targetPosX.addEventListener('input', (e) => handleTargetInput('x', e.target.value));
-targetPosY.addEventListener('input', (e) => handleTargetInput('y', e.target.value));
-targetPosZ.addEventListener('input', (e) => handleTargetInput('z', e.target.value));
-
-targetResetBtn.addEventListener('click', () => {
-  controls.target.set(0, 0, 0);
-  targetGlyph.position.set(0, 0, 0);
-  updateTargetUI();
-});
-
-const clearTargetAction = () => {
-  controls.target.set(0, 0, 0);
-  targetGlyph.visible = false;
-  clearTargetBtn.classList.add('hidden');
-  targetPanel.classList.add('hidden');
-};
+// Legacy target UI replaced by floating target popup — hide toolbar clear btn + center panel permanently
+const _legacyClearTargetBtn = document.getElementById('clear-target-btn');
+const _legacyTargetPanel = document.getElementById('target-panel');
+if (_legacyClearTargetBtn) _legacyClearTargetBtn.style.display = 'none';
+if (_legacyTargetPanel) _legacyTargetPanel.style.display = 'none';
 
 setTargetBtn.addEventListener('click', () => {
   isSettingTarget = true;
   document.body.style.cursor = 'crosshair';
 });
 
-clearTargetBtn.addEventListener('click', clearTargetAction);
-targetClearBtn.addEventListener('click', clearTargetAction);
+function showTargetPopup() {
+  let popup = document.getElementById('target-popup');
+  if (!popup) {
+    popup = document.createElement('div');
+    popup.id = 'target-popup';
+    popup.className = 'object-popup';
+    popup.style.cssText = 'position:absolute;z-index:500;width:220px;display:none;';
+    popup.innerHTML = `
+      <div class="object-popup-header">
+        <span class="object-popup-name" style="color:var(--accent);">&#9678; Camera Target</span>
+        <button id="target-delete-btn" title="Clear target"
+          style="background:none;border:none;cursor:pointer;color:#555;font-size:22px;padding:0 2px;line-height:1;">&#128465;</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-secondary);margin-bottom:6px;">Move target</div>
+      <div class="popup-axis-row">
+        <span class="axis-label">L/R</span>
+        <input type="range" id="target-x" min="-2" max="2" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">U/D</span>
+        <input type="range" id="target-y" min="-2" max="2" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">F/B</span>
+        <input type="range" id="target-z" min="-2" max="2" step="0.001" value="0">
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px;">
+        <button class="popup-reset-btn" id="target-reset-origin-btn" style="flex:1;">
+          &#8634; Reset to Origin
+        </button>
+        <button class="popup-reset-btn" id="target-reset-center-btn" style="flex:1;">
+          &#8857; Reset Set Position
+        </button>
+      </div>`;
+    document.getElementById('viewport').appendChild(popup);
+
+    document.getElementById('target-delete-btn').addEventListener('click', () => {
+      clearCameraTarget();
+    });
+
+    document.getElementById('target-reset-origin-btn').addEventListener('click', () => {
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      ['x', 'y', 'z'].forEach(axis => {
+        const slider = document.getElementById(`target-${axis}`);
+        if (slider) slider.value = 0;
+      });
+
+      requestAnimationFrame(() => {
+        positionTargetPopup();
+        updateTargetMarker();
+      });
+
+      markSceneModified();
+    });
+
+    document.getElementById('target-reset-center-btn').addEventListener('click', () => {
+      controls.target.copy(originalTargetPosition);
+      controls.update();
+      updateTargetSliders();
+      markSceneModified();
+    });
+
+    const targetSliderBase = {};
+    ['x', 'y', 'z'].forEach(axis => {
+      const slider = document.getElementById('target-' + axis);
+      slider.addEventListener('mousedown', () => {
+        targetSliderBase[axis] = controls.target[axis];
+        slider.value = 0;
+      });
+      slider.addEventListener('input', () => {
+        controls.target[axis] = (targetSliderBase[axis] || 0) + parseFloat(slider.value) * 0.3;
+        controls.update();
+        markSceneModified();
+      });
+    });
+  }
+  popup.style.display = 'block';
+  positionTargetPopup();
+}
+
+function positionTargetPopup() {
+  const popup = document.getElementById('target-popup');
+  if (!popup || popup.style.display === 'none') return;
+  const vector = controls.target.clone();
+  vector.project(camera);
+  const canvas = renderer.domElement;
+  const vw = canvas.clientWidth;
+  const vh = canvas.clientHeight;
+  const x = (vector.x * 0.5 + 0.5) * vw;
+  const y = (-vector.y * 0.5 + 0.5) * vh;
+  const px = Math.min(x + 20, vw - 240);
+  const py = Math.min(Math.max(y - 60, 40), vh - 300);
+  popup.style.left = px + 'px';
+  popup.style.top = py + 'px';
+}
+
+function updateTargetSliders() {
+  ['x', 'y', 'z'].forEach(axis => {
+    const slider = document.getElementById('target-' + axis);
+    if (slider) slider.value = 0;
+  });
+}
+
+function clearCameraTarget() {
+  controls.target.set(0, 0, 0);
+  controls.update();
+  const popup = document.getElementById('target-popup');
+  if (popup) popup.style.display = 'none';
+  const marker = document.getElementById('target-marker');
+  if (marker) marker.style.display = 'none';
+  if (typeof targetGlyph !== 'undefined' && targetGlyph) targetGlyph.visible = false;
+  markSceneModified();
+}
+
+function updateTargetMarker() {
+  let marker = document.getElementById('target-marker');
+  const popup = document.getElementById('target-popup');
+  if (!popup || popup.style.display === 'none') {
+    if (marker) marker.style.display = 'none';
+    return;
+  }
+  if (!marker) {
+    marker = document.createElement('div');
+    marker.id = 'target-marker';
+    marker.style.cssText = 'position:absolute;width:12px;height:12px;border:1.5px solid var(--accent);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:40;display:none;';
+    document.getElementById('viewport').appendChild(marker);
+  }
+  const vector = controls.target.clone();
+  vector.project(camera);
+  const canvas = renderer.domElement;
+  const x = (vector.x * 0.5 + 0.5) * canvas.clientWidth;
+  const y = (-vector.y * 0.5 + 0.5) * canvas.clientHeight;
+  marker.style.left = x + 'px';
+  marker.style.top = y + 'px';
+  marker.style.display = 'block';
+}
 
 let selectedObject = null;
 
@@ -941,8 +1034,9 @@ renderer.domElement.addEventListener('wheel', (e) => {
     }
   }
   
-  if (!handled && !targetPanel.classList.contains('hidden') && isTKeyDown) {
-    if (!selectedObject) {
+  if (!handled && isTKeyDown && !selectedObject) {
+    const _tgtPopup = document.getElementById('target-popup');
+    if (_tgtPopup && _tgtPopup.style.display === 'block') {
       e.preventDefault();
       e.stopPropagation();
       const delta = e.deltaY < 0 ? 0.1 : -0.1;
@@ -950,7 +1044,8 @@ renderer.domElement.addEventListener('wheel', (e) => {
       newY = Math.max(-20, Math.min(20, newY));
       controls.target.y = newY;
       targetGlyph.position.y = newY;
-      updateTargetUI();
+      controls.update();
+      markSceneModified();
     }
   }
 }, { passive: false });
@@ -982,6 +1077,10 @@ document.getElementById('clear-scene-btn').addEventListener('click', () => {
       scalePanel.classList.add('hidden');
       hideObjectPopup();
     }
+    const targetPopup = document.getElementById('target-popup');
+    if (targetPopup) targetPopup.style.display = 'none';
+    const targetMarker = document.getElementById('target-marker');
+    if (targetMarker) targetMarker.style.display = 'none';
     updateLayersPanel();
     markSceneModified();
   }
@@ -1028,10 +1127,8 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     }
 
     if (hitFound) {
-      targetGlyph.visible = true;
-      clearTargetBtn.classList.remove('hidden');
-      updateTargetUI();
-      targetPanel.classList.remove('hidden');
+      originalTargetPosition.copy(controls.target);
+      showTargetPopup();
     }
 
     isSettingTarget = false;
@@ -2437,6 +2534,10 @@ function _clearSceneSilently() {
     selectedObject = null;
     hideObjectPopup();
   }
+  const targetPopup = document.getElementById('target-popup');
+  if (targetPopup) targetPopup.style.display = 'none';
+  const targetMarker = document.getElementById('target-marker');
+  if (targetMarker) targetMarker.style.display = 'none';
   boxCount = 0;
   sphereCount = 0;
   updateLayersPanel();
@@ -2498,6 +2599,8 @@ async function saveScene(saveAs = false) {
     savedAt: new Date().toISOString(),
     thumbnail,
     ratio: ratioSel ? ratioSel.value : '16:9',
+    targetVisible: document.getElementById('target-popup')?.style.display === 'block',
+    originalTargetPosition: originalTargetPosition.toArray(),
 
     camera: {
       position: camera.position.toArray(),
@@ -2619,6 +2722,19 @@ async function loadScene(filePath) {
     camera.updateProjectionMatrix();
     targetFov = data.camera.fov;
     controls.update();
+  }
+
+  // ---- Target popup visibility ----
+  if (Array.isArray(data.originalTargetPosition)) {
+    originalTargetPosition.fromArray(data.originalTargetPosition);
+  }
+  if (data.targetVisible) {
+    showTargetPopup();
+  } else {
+    const _tp = document.getElementById('target-popup');
+    if (_tp) _tp.style.display = 'none';
+    const _tm = document.getElementById('target-marker');
+    if (_tm) _tm.style.display = 'none';
   }
 
   // ---- Lens ----
