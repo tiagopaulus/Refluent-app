@@ -325,7 +325,7 @@ ipcMain.handle('dialog:openModel', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [
-      { name: '3D Models', extensions: ['obj', 'gltf', 'glb'] }
+      { name: '3D Models', extensions: ['obj', 'gltf', 'glb', 'fbx', 'dae'] }
     ]
   });
   

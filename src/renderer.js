@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
 import { getTranslation, setLanguage } from './i18n.js';
 // Providers live in the main process and are invoked via IPC (window.electronAPI.ai*)
 
@@ -1212,21 +1214,12 @@ document.getElementById('add-sphere-btn').addEventListener('click', () => {
 const loadingOverlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
 
-document.getElementById('import-model-btn').addEventListener('click', async () => {
-  const filePath = await window.electronAPI.openModel();
-  if (!filePath) return;
-
+async function loadModelFile(filePath, ext, nameWithoutExt) {
   loadingOverlay.classList.remove('hidden');
   loadingText.innerText = getTranslation('loadingModel');
 
-  const ext = filePath.split('.').pop().toLowerCase();
-
   const fileUrl = encodeURI(`file:///${filePath.replace(/\\/g, '/')}`);
 
-  const fileName = filePath.split('\\').pop().split('/').pop();
-  const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-
-  // Mission H - capture file as base64 for scene save embedding
   let modelDataB64 = null;
   try {
     modelDataB64 = await window.electronAPI.readFileBase64(filePath);
@@ -1276,12 +1269,72 @@ document.getElementById('import-model-btn').addEventListener('click', async () =
   };
 
   if (ext === 'obj') {
-    const loader = new OBJLoader();
-    loader.load(fileUrl, onLoad, undefined, onError);
+    new OBJLoader().load(fileUrl, onLoad, undefined, onError);
   } else if (ext === 'glb' || ext === 'gltf') {
-    const loader = new GLTFLoader();
-    loader.load(fileUrl, onLoad, undefined, onError);
+    new GLTFLoader().load(fileUrl, onLoad, undefined, onError);
+  } else if (ext === 'fbx') {
+    new FBXLoader().load(fileUrl, onLoad, undefined, onError);
+  } else if (ext === 'dae') {
+    new ColladaLoader().load(fileUrl, onLoad, undefined, onError);
+  } else {
+    loadingOverlay.classList.add('hidden');
+    showToast('Unsupported file format: ' + ext);
   }
+}
+
+document.getElementById('import-model-btn').addEventListener('click', async () => {
+  const filePath = await window.electronAPI.openModel();
+  if (!filePath) return;
+  const ext = filePath.split('.').pop().toLowerCase();
+  const fileName = filePath.split('\\').pop().split('/').pop();
+  const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+  loadModelFile(filePath, ext, nameWithoutExt);
+});
+
+// Drag & drop 3D models onto the viewport
+const viewportEl = document.getElementById('viewport');
+const SUPPORTED_MODEL_EXTS = ['obj', 'glb', 'gltf', 'fbx', 'dae'];
+
+viewportEl.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const items = Array.from(e.dataTransfer.items || []);
+  if (items.some(item => item.kind === 'file')) {
+    viewportEl.classList.add('drag-over');
+  }
+});
+
+viewportEl.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  viewportEl.classList.remove('drag-over');
+});
+
+viewportEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  viewportEl.classList.remove('drag-over');
+
+  const files = Array.from(e.dataTransfer.files);
+  files.forEach(file => {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const filePath = file.path;
+    if (ext === 'ent') {
+      if (filePath) window.electronAPI.openSceneFromPath(filePath);
+      return;
+    }
+    if (SUPPORTED_MODEL_EXTS.includes(ext)) {
+      if (!filePath) {
+        showToast('Cannot read dropped file path');
+        return;
+      }
+      const filename = file.name.replace(/\.[^/.]+$/, '');
+      showToast(`Loading ${file.name}...`);
+      loadModelFile(filePath, ext, filename);
+    } else {
+      showToast(`Unsupported format: .${ext} — use OBJ, GLB, FBX or DAE`);
+    }
+  });
 });
 
 // ---- Recording Setup ----
@@ -2758,6 +2811,16 @@ async function _loadModelFromBase64(base64, format) {
       const loader = new OBJLoader();
       try { resolve(loader.parse(new TextDecoder().decode(bytes))); }
       catch (e) { reject(e); }
+    } else if (format === 'fbx') {
+      const loader = new FBXLoader();
+      try { resolve(loader.parse(bytes.buffer, '')); }
+      catch (e) { reject(e); }
+    } else if (format === 'dae') {
+      const loader = new ColladaLoader();
+      try {
+        const collada = loader.parse(new TextDecoder().decode(bytes), '');
+        resolve(collada.scene || collada);
+      } catch (e) { reject(e); }
     } else {
       reject(new Error('Unsupported model format: ' + format));
     }
