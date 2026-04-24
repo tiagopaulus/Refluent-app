@@ -105,6 +105,44 @@ function updateObjectAnimations(delta) {
   });
 }
 
+// ---- Prompt Templates ----
+const PROMPT_TEMPLATES = {
+  nanobanana: [
+    { name: 'Studio Match',     description: 'Clean commercial studio — preserves camera angle exactly',
+      prompt: 'Reproduce the exact camera angle, focal length, and framing of the reference frame. Maintain all proportions and spatial relationships. Apply a clean commercial studio aesthetic with controlled, soft lighting.' },
+    { name: 'Cinematic Grade',  description: 'Cinematic quality with dramatic lighting and color',
+      prompt: 'Match the perspective and composition of the reference frame precisely. Elevate the lighting to cinematic quality with dramatic shadows and rich color grading. Preserve all spatial proportions from the reference.' },
+    { name: 'Product Hero',     description: 'Premium product photography — soft diffused light',
+      prompt: 'Preserve the exact framing and proportions from the reference frame. Present the subject with premium product photography lighting — soft, diffused, elevated. Clean background, professional finish.' },
+    { name: 'Editorial',        description: 'High-fashion editorial with strong contrast',
+      prompt: 'Follow the reference frame composition and ratio exactly. Apply a high-fashion editorial tone with strong contrast and intentional color treatment. Maintain all camera angles and spatial relationships.' },
+    { name: 'Neutral Reference', description: 'Accurate neutral output — ideal as motion reference',
+      prompt: 'Faithfully reproduce the camera angle, proportions and spatial layout of the reference frame with neutral, accurate lighting. Minimal stylization — preserve as close to the reference geometry as possible.' }
+  ],
+  seedance: [
+    { name: 'Motion Faithful',   description: 'Visual reference defines style, viewport guides motion',
+      prompt: 'Use the reference image as the visual tone, color and style guide for every frame. Use the viewport video strictly as the guide for camera motion, object animation and 3D proportions. Do not alter the visual style established in the reference image.' },
+    { name: 'Smooth Commercial', description: 'Polished commercial motion — campaign ready',
+      prompt: 'The reference image defines the look and feel of the entire video. Follow the camera movement from the viewport video exactly. Produce smooth, polished motion suitable for commercial campaigns. Maintain color consistency throughout.' },
+    { name: 'Dynamic Campaign',  description: 'Energetic with precise camera choreography',
+      prompt: 'Apply the visual language of the reference image throughout all frames. Mirror the camera choreography from the viewport video precisely. Enhance with subtle motion dynamics appropriate for advertising content. High energy, brand-forward.' },
+    { name: 'Minimal Clean',     description: 'Clean and stable — prioritizes consistency',
+      prompt: 'Maintain the clean aesthetic from the reference image across all frames. Reproduce the viewport camera movement faithfully. Prioritize visual consistency and stability over stylization. No unnecessary motion enhancement.' },
+    { name: 'Luxury Brand',      description: 'Premium slow motion — beauty and cosmetics',
+      prompt: 'Apply the elevated, luxurious aesthetic of the reference image to every frame. Follow the viewport camera movement with added smoothness and refinement. Slow, deliberate pacing. Suitable for luxury product and beauty campaigns.' }
+  ],
+  upscale: [
+    { name: 'Faithful 4K',   description: 'Pure resolution increase — no style changes',
+      prompt: 'Upscale to 4K resolution. Preserve all visual information, color accuracy, motion and detail exactly as in the source. Do not add, remove or alter any content — resolution enhancement only. Maintain complete fidelity to the original.' },
+    { name: 'Faithful 8K',   description: 'Maximum resolution — zero distortion',
+      prompt: 'Upscale to 8K resolution. Maintain complete fidelity to the source material. No denoising, sharpening or style changes — pure resolution increase. Preserve every detail, color value and motion characteristic of the original.' },
+    { name: 'Enhanced 4K',   description: 'Subtle detail enhancement at 4K',
+      prompt: 'Upscale to 4K resolution with subtle detail enhancement. Slightly improve edge definition and texture clarity while preserving the original visual style, color palette and motion. Do not alter composition or add new elements.' },
+    { name: 'Enhanced 8K',   description: 'Maximum resolution with fine detail recovery',
+      prompt: 'Upscale to 8K resolution with fine detail recovery. Enhance micro-texture and edge definition while maintaining complete visual fidelity to the source. Preserve all color relationships, motion and compositional elements.' }
+  ]
+};
+
 // ---- Pipeline State ----
 const pipelineState = {
   // Stage 1 — Viewport
@@ -115,11 +153,11 @@ const pipelineState = {
   referenceFrame: null,
   referenceFrameImage: null,
 
-  // Stage 3 — NanoBanana
-  nanoBananaPrompt: null,
-  nanoBananaReferenceImages: [],
-  nanoBananaResultImage: null,
-  nanoBananaSkipped: false,
+  // Stage 3 — Nanobanana
+  nanobananaPrompt: null,
+  nanobananaReferenceImages: [],
+  nanobananaResultImage: null,
+  nanobananaSkipped: false,
 
   // Stage 4 — Seedance
   seedancePrompt: null,
@@ -2892,10 +2930,10 @@ async function saveScene(saveAs = false) {
       mp4Filename: pipelineState.mp4Filename,
       referenceFrame: pipelineState.referenceFrame,
       referenceFrameImage: pipelineState.referenceFrameImage,
-      nanoBananaPrompt: pipelineState.nanoBananaPrompt,
-      nanoBananaReferenceImages: [...(pipelineState.nanoBananaReferenceImages || [])],
-      nanoBananaResultImage: pipelineState.nanoBananaResultImage,
-      nanoBananaSkipped: pipelineState.nanoBananaSkipped,
+      nanobananaPrompt: pipelineState.nanobananaPrompt,
+      nanobananaReferenceImages: [...(pipelineState.nanobananaReferenceImages || [])],
+      nanobananaResultImage: pipelineState.nanobananaResultImage,
+      nanobananaSkipped: pipelineState.nanobananaSkipped,
       seedancePrompt: pipelineState.seedancePrompt,
       seedanceReferenceImage: pipelineState.seedanceReferenceImage,
       seedanceResultVideo: pipelineState.seedanceResultVideo,
@@ -3187,8 +3225,8 @@ async function loadScene(filePath) {
   if (data.pipeline) {
     const p = data.pipeline;
     Object.assign(pipelineState, p);
-    if (!Array.isArray(pipelineState.nanoBananaReferenceImages)) {
-      pipelineState.nanoBananaReferenceImages = [];
+    if (!Array.isArray(pipelineState.nanobananaReferenceImages)) {
+      pipelineState.nanobananaReferenceImages = [];
     }
     rebuildSimplePanel();
     buildNodeEditor();
@@ -3197,9 +3235,9 @@ async function loadScene(filePath) {
     updateStepMediaPreviews();
     if (typeof updateNodeMediaPreviews === 'function') updateNodeMediaPreviews();
 
-    if (pipelineState.nanoBananaPrompt) {
+    if (pipelineState.nanobananaPrompt) {
       const el = document.querySelector('.step-card[data-step-key="nanobanana"] #nb-prompt');
-      if (el) el.value = pipelineState.nanoBananaPrompt;
+      if (el) el.value = pipelineState.nanobananaPrompt;
     }
     if (pipelineState.seedancePrompt) {
       const el = document.querySelector('.step-card[data-step-key="seedance"] #sd-prompt');
@@ -3493,7 +3531,7 @@ setLayout(savedLayout);
 
 function getActivePipelineSteps() {
   const steps = ['mp4', 'frame'];
-  if (!pipelineState.nanoBananaSkipped) steps.push('nanobanana');
+  if (!pipelineState.nanobananaSkipped) steps.push('nanobanana');
   if (!pipelineState.seedanceSkipped) steps.push('seedance');
   if (!pipelineState.upscaleSkipped) steps.push('upscale');
   pipelineState.activeSteps = steps;
@@ -3528,8 +3566,8 @@ function advanceFromStep(stepId) {
   if (next) activateStep(next);
 }
 
-function onNanoBananaComplete(imageUrl) {
-  pipelineState.nanoBananaResultImage = imageUrl;
+function onNanobananaComplete(imageUrl) {
+  pipelineState.nanobananaResultImage = imageUrl;
   pipelineState.seedanceReferenceImage = imageUrl;
   const refArea = document.getElementById('sd-ref-image-area');
   if (refArea) {
@@ -3543,10 +3581,10 @@ function resetPipeline() {
   pipelineState.mp4Filename = null;
   pipelineState.referenceFrame = null;
   pipelineState.referenceFrameImage = null;
-  pipelineState.nanoBananaPrompt = null;
-  pipelineState.nanoBananaReferenceImages = [];
-  pipelineState.nanoBananaResultImage = null;
-  pipelineState.nanoBananaSkipped = false;
+  pipelineState.nanobananaPrompt = null;
+  pipelineState.nanobananaReferenceImages = [];
+  pipelineState.nanobananaResultImage = null;
+  pipelineState.nanobananaSkipped = false;
   pipelineState.seedancePrompt = null;
   pipelineState.seedanceReferenceImage = null;
   pipelineState.seedanceResultVideo = null;
@@ -3581,7 +3619,7 @@ const stepWorldPositions = {
 const stepDefs = [
   { id: 'mp4',        idx: 0, i18nKey: 'stepMp4Label',        fallback: 'MP4 Ready',        skippable: false },
   { id: 'frame',      idx: 1, i18nKey: 'stepFrameLabel',      fallback: 'Reference Frame',  skippable: false },
-  { id: 'nanobanana', idx: 2, i18nKey: 'stepNanoBananaLabel', fallback: 'NanaBanana',       skippable: true  },
+  { id: 'nanobanana', idx: 2, i18nKey: 'stepNanobananaLabel', fallback: 'Nanobanana',       skippable: true  },
   { id: 'seedance',   idx: 3, i18nKey: 'stepSeedanceLabel',   fallback: 'Seedance',         skippable: true  },
   { id: 'upscale',    idx: 4, i18nKey: 'stepUpscaleLabel',    fallback: 'Upscale',          skippable: true  }
 ];
@@ -3755,7 +3793,7 @@ function _bodyForStep(step) {
           <input type="number" class="pipeline-input" id="frame-input" min="0" step="0.1" value="0">
           <button id="confirm-frame" class="pipeline-confirm-btn">✓</button>
         </div>
-        <div class="pipeline-hint-block">Guides NanaBanana's camera angle and proportions</div>
+        <div class="pipeline-hint-block">Guides Nanobanana's camera angle and proportions</div>
       </div>`;
   }
   if (step.id === 'nanobanana') {
@@ -3782,7 +3820,7 @@ function _bodyForStep(step) {
     return `
       <div class="step-content seedance-body">
         <div class="pipeline-label">Visual Reference</div>
-        <div id="sd-ref-image-area" class="sd-ref-image-area">Auto-filled from NanaBanana</div>
+        <div id="sd-ref-image-area" class="sd-ref-image-area">Auto-filled from Nanobanana</div>
         <button id="sd-override-ref-btn" class="sd-override-ref-btn">+ Use different image</button>
         <div class="pipeline-label-row">
           <span class="pipeline-label">Prompt</span>
@@ -3824,11 +3862,112 @@ function buildStepCardHTML(step) {
     <div class="step-body">${_bodyForStep(step)}</div>`;
 }
 
+function showTemplatePicker(type, targetTextareaId) {
+  const existing = document.getElementById('template-picker-overlay');
+  if (existing) {
+    existing.remove();
+    const oldBackdrop = document.getElementById('template-picker-backdrop');
+    if (oldBackdrop) oldBackdrop.remove();
+    return;
+  }
+
+  const templates = PROMPT_TEMPLATES[type];
+  if (!templates) return;
+
+  const titles = {
+    nanobanana: 'Nanobanana Prompt Templates',
+    seedance:   'Seedance Prompt Templates',
+    upscale:    'Upscale Prompt Templates'
+  };
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'template-picker-backdrop';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'template-picker-overlay';
+  overlay.innerHTML = `
+    <div class="tpl-picker-header">
+      <div>
+        <div class="tpl-picker-title">${titles[type]}</div>
+        <div class="tpl-picker-subtitle">Select a template to fill the prompt field — you can edit it after</div>
+      </div>
+      <button id="template-picker-close" class="tpl-picker-close">✕</button>
+    </div>
+    <div id="template-list" class="tpl-picker-list"></div>`;
+
+  const closePicker = () => {
+    overlay.remove();
+    backdrop.remove();
+  };
+
+  const list = overlay.querySelector('#template-list');
+  templates.forEach(template => {
+    const card = document.createElement('div');
+    card.className = 'tpl-card';
+    const preview = template.prompt.length > 120 ? template.prompt.slice(0, 120) + '...' : template.prompt;
+    card.innerHTML = `
+      <div class="tpl-card-inner">
+        <div class="tpl-card-text">
+          <div class="tpl-card-name">${template.name}</div>
+          <div class="tpl-card-desc">${template.description}</div>
+          <div class="tpl-card-preview">"${preview}"</div>
+        </div>
+        <button class="tpl-use-btn">Use →</button>
+      </div>`;
+
+    const applyTemplate = () => {
+      // Fill BOTH the Simple Mode textarea and its Node Editor counterpart
+      const baseId = targetTextareaId.replace(/-node$/, '');
+      const nodeId = baseId + '-node';
+      [baseId, nodeId].forEach(id => {
+        const ta = document.getElementById(id);
+        if (!ta) return;
+        ta.value = template.prompt;
+        ta.style.borderColor = 'var(--accent)';
+        setTimeout(() => { ta.style.borderColor = ''; }, 1000);
+      });
+      if (type === 'nanobanana') pipelineState.nanobananaPrompt = template.prompt;
+      if (type === 'seedance')   pipelineState.seedancePrompt   = template.prompt;
+      if (type === 'upscale')    pipelineState.upscalePrompt    = template.prompt;
+      closePicker();
+      markSceneModified();
+    };
+
+    card.querySelector('.tpl-use-btn').addEventListener('click', (e) => { e.stopPropagation(); applyTemplate(); });
+    card.addEventListener('click', applyTemplate);
+    list.appendChild(card);
+  });
+
+  overlay.querySelector('#template-picker-close').addEventListener('click', closePicker);
+  backdrop.addEventListener('click', closePicker);
+
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      closePicker();
+      window.removeEventListener('keydown', escHandler, true);
+    }
+  };
+  window.addEventListener('keydown', escHandler, true);
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(overlay);
+}
+
+function wireTemplateButton(card, stage, textareaId) {
+  const btns = card.querySelectorAll(`.template-picker-btn[data-stage="${stage}"]`);
+  btns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showTemplatePicker(stage, textareaId);
+    });
+  });
+}
+
 function wireRefImageSlots(scope) {
   const slots = (scope || document).querySelectorAll('.ref-img-slot');
   slots.forEach(slot => {
     const slotIndex = parseInt(slot.dataset.slot, 10);
-    const existing = pipelineState.nanoBananaReferenceImages[slotIndex];
+    const existing = pipelineState.nanobananaReferenceImages[slotIndex];
     if (existing) {
       const safe = `file:///${existing.replace(/\\/g, '/')}`;
       slot.innerHTML = `<img src="${safe}">`;
@@ -3840,7 +3979,7 @@ function wireRefImageSlots(scope) {
         filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
       });
       if (!filePath) return;
-      pipelineState.nanoBananaReferenceImages[slotIndex] = filePath;
+      pipelineState.nanobananaReferenceImages[slotIndex] = filePath;
       const safe = `file:///${filePath.replace(/\\/g, '/')}`;
       slot.innerHTML = `<img src="${safe}">`;
       slot.classList.add('filled');
@@ -3848,7 +3987,7 @@ function wireRefImageSlots(scope) {
     });
     slot.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      pipelineState.nanoBananaReferenceImages[slotIndex] = null;
+      pipelineState.nanobananaReferenceImages[slotIndex] = null;
       slot.innerHTML = '+';
       slot.classList.remove('filled');
       updateRefImageHint();
@@ -3858,7 +3997,7 @@ function wireRefImageSlots(scope) {
 }
 
 function updateRefImageHint() {
-  const filled = pipelineState.nanoBananaReferenceImages.filter(Boolean).length;
+  const filled = pipelineState.nanobananaReferenceImages.filter(Boolean).length;
   const hint = document.getElementById('nb-img-hint');
   if (!hint) return;
   if (filled <= 1) {
@@ -3873,18 +4012,18 @@ function updateRefImageHint() {
   }
 }
 
-async function runNanoBananaGenerate(scope) {
+async function runNanobananaGenerate(scope) {
   const root = scope || document;
   const promptEl = root.querySelector('#nb-prompt');
   if (!promptEl) return;
-  pipelineState.nanoBananaPrompt = promptEl.value.trim();
-  if (!pipelineState.nanoBananaPrompt) return;
+  pipelineState.nanobananaPrompt = promptEl.value.trim();
+  if (!pipelineState.nanobananaPrompt) return;
   const btn = root.querySelector('#nb-generate-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
   try {
     const job = await window.electronAPI.aiImageGenerate({
-      prompt: pipelineState.nanoBananaPrompt,
-      referenceImagePath: pipelineState.nanoBananaReferenceImages.filter(Boolean)[0] || null
+      prompt: pipelineState.nanobananaPrompt,
+      referenceImagePath: pipelineState.nanobananaReferenceImages.filter(Boolean)[0] || null
     });
     if (!job || !job.success) {
       if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
@@ -3895,7 +4034,7 @@ async function runNanoBananaGenerate(scope) {
       if (status.status === 'complete') {
         clearInterval(poll);
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
-        onNanoBananaComplete(status.imageUrl || status.imagePath || 'mock://nb.png');
+        onNanobananaComplete(status.imageUrl || status.imagePath || 'mock://nb.png');
       } else if (status.status === 'error') {
         clearInterval(poll);
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
@@ -3984,10 +4123,20 @@ function wireStepCardInteractions(card, step) {
     });
   } else if (step.id === 'nanobanana') {
     wireRefImageSlots(card);
+    wireTemplateButton(card, 'nanobanana', 'nb-prompt');
     const gen = card.querySelector('#nb-generate-btn');
-    if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runNanoBananaGenerate(card); });
+    if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runNanobananaGenerate(card); });
     const prompt = card.querySelector('#nb-prompt');
-    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
+    if (prompt) {
+      if (pipelineState.nanobananaPrompt) prompt.value = pipelineState.nanobananaPrompt;
+      prompt.addEventListener('click', (e) => e.stopPropagation());
+      prompt.addEventListener('input', () => {
+        pipelineState.nanobananaPrompt = prompt.value;
+        const nodeEl = document.getElementById('nb-prompt-node');
+        if (nodeEl && nodeEl.value !== prompt.value) nodeEl.value = prompt.value;
+        markSceneModified();
+      });
+    }
   } else if (step.id === 'seedance') {
     const override = card.querySelector('#sd-override-ref-btn');
     if (override) override.addEventListener('click', async (e) => {
@@ -4003,10 +4152,20 @@ function wireStepCardInteractions(card, step) {
         area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
       }
     });
+    wireTemplateButton(card, 'seedance', 'sd-prompt');
     const gen = card.querySelector('#sd-generate-btn');
     if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runSeedanceGenerate(card); });
     const prompt = card.querySelector('#sd-prompt');
-    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
+    if (prompt) {
+      if (pipelineState.seedancePrompt) prompt.value = pipelineState.seedancePrompt;
+      prompt.addEventListener('click', (e) => e.stopPropagation());
+      prompt.addEventListener('input', () => {
+        pipelineState.seedancePrompt = prompt.value;
+        const nodeEl = document.getElementById('sd-prompt-node');
+        if (nodeEl && nodeEl.value !== prompt.value) nodeEl.value = prompt.value;
+        markSceneModified();
+      });
+    }
   } else if (step.id === 'upscale') {
     card.querySelectorAll('.upscale-res-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -4016,10 +4175,20 @@ function wireStepCardInteractions(card, step) {
         pipelineState.upscaleResolution = btn.dataset.res;
       });
     });
+    wireTemplateButton(card, 'upscale', 'up-prompt');
     const gen = card.querySelector('#up-generate-btn');
     if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runUpscaleGenerate(card); });
     const prompt = card.querySelector('#up-prompt');
-    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
+    if (prompt) {
+      if (pipelineState.upscalePrompt) prompt.value = pipelineState.upscalePrompt;
+      prompt.addEventListener('click', (e) => e.stopPropagation());
+      prompt.addEventListener('input', () => {
+        pipelineState.upscalePrompt = prompt.value;
+        const nodeEl = document.getElementById('up-prompt-node');
+        if (nodeEl && nodeEl.value !== prompt.value) nodeEl.value = prompt.value;
+        markSceneModified();
+      });
+    }
   }
 }
 
@@ -4179,7 +4348,8 @@ function syncNodeEditor() {
 }
 
 function wireNodeInteractions() {
-  // Nodes are status views; rich interaction lives in Simple Mode cards.
+  // Node-editor Templates buttons and prompt textareas are wired inside
+  // buildNodeEditor right after innerHTML is set.
 }
 
 // ---- Mission J: Node Editor overhaul ----
@@ -4624,12 +4794,67 @@ function buildNodeEditor() {
   const nodePanelEl = document.getElementById('node-panel');
   if (!nodePanelEl) return;
 
+  const nodePromptIds = { nanobanana: 'nb-prompt-node', seedance: 'sd-prompt-node', upscale: 'up-prompt-node' };
+  const nodePlaceholders = {
+    nanobanana: 'Describe camera angle, lighting and style...',
+    seedance:   'Describe the visual tone and style for the video...',
+    upscale:    'Upscale instructions...'
+  };
+  const nodeTplBody = (stage) => `
+    <div class="node-tpl-body">
+      <textarea id="${nodePromptIds[stage]}" class="node-prompt" rows="2" placeholder="${nodePlaceholders[stage]}"></textarea>
+      <button class="template-picker-btn" data-stage="${stage}">⚡ Templates</button>
+    </div>`;
+
   nodePanelEl.innerHTML =
     _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
     _nodeCardHTML('frame',      'Reference Frame',  'Step 2', true,  true,  '<span style="font-size:9px;color:#555;">Pick a frame in Simple Mode</span>') +
-    _nodeCardHTML('nanobanana', 'NanaBanana',       'Step 3', true,  true,  '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>') +
-    _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>') +
-    _nodeCardHTML('upscale',    'Upscale',          'Step 5', true,  false, '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>');
+    _nodeCardHTML('nanobanana', 'Nanobanana',       'Step 3', true,  true,  nodeTplBody('nanobanana')) +
+    _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  nodeTplBody('seedance')) +
+    _nodeCardHTML('upscale',    'Upscale',          'Step 5', true,  false, nodeTplBody('upscale'));
+
+  // Wire node-editor Templates buttons immediately after innerHTML is set
+  const nbNodeTemplateBtn = document.querySelector('.node-card[data-node="nanobanana"] .template-picker-btn');
+  if (nbNodeTemplateBtn) {
+    nbNodeTemplateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showTemplatePicker('nanobanana', 'nb-prompt-node');
+    });
+  }
+  const sdNodeTemplateBtn = document.querySelector('.node-card[data-node="seedance"] .template-picker-btn');
+  if (sdNodeTemplateBtn) {
+    sdNodeTemplateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showTemplatePicker('seedance', 'sd-prompt-node');
+    });
+  }
+  const upNodeTemplateBtn = document.querySelector('.node-card[data-node="upscale"] .template-picker-btn');
+  if (upNodeTemplateBtn) {
+    upNodeTemplateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showTemplatePicker('upscale', 'up-prompt-node');
+    });
+  }
+
+  // Two-way sync: typing in a node textarea writes state + mirrors to Simple Mode
+  const nodeMirrorSpecs = [
+    { nodeId: 'nb-prompt-node', simpleId: 'nb-prompt', key: 'nanobananaPrompt' },
+    { nodeId: 'sd-prompt-node', simpleId: 'sd-prompt', key: 'seedancePrompt' },
+    { nodeId: 'up-prompt-node', simpleId: 'up-prompt', key: 'upscalePrompt' }
+  ];
+  nodeMirrorSpecs.forEach(({ nodeId, simpleId, key }) => {
+    const el = document.getElementById(nodeId);
+    if (!el) return;
+    if (pipelineState[key]) el.value = pipelineState[key];
+    el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('mousedown', (e) => e.stopPropagation());
+    el.addEventListener('input', () => {
+      pipelineState[key] = el.value;
+      const other = document.getElementById(simpleId);
+      if (other && other.value !== el.value) other.value = el.value;
+      markSceneModified();
+    });
+  });
 
   // Grid canvas behind nodes
   const gridCanvas = document.createElement('canvas');
