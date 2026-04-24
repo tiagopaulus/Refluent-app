@@ -2428,6 +2428,7 @@ function showWalkthrough() {
         }
         overlay.remove();
         localStorage.setItem('first_launch', 'done');
+        setTimeout(() => { if (shouldShowTour()) startTour(0); }, 500);
       }
     });
 
@@ -2440,6 +2441,233 @@ function showWalkthrough() {
   document.body.appendChild(overlay);
   renderSlide();
 }
+
+// ---- Guided Tour ----
+const TOUR_STEPS = [
+  { id: 'add-object',     target: '#add-box-btn',
+    title: 'Add an Object',
+    body:  'Click "Add Box" to place your first 3D object into the scene.',
+    position: 'right', action: 'click' },
+  { id: 'move-object',    target: '.object-popup:not(.hidden)',
+    title: 'Move Your Object',
+    body:  'Use the L/R, U/D and F/B sliders to position your object in the scene.',
+    position: 'left',  action: 'next' },
+  { id: 'scale-object',   target: '.object-popup:not(.hidden)',
+    title: 'Resize Your Object',
+    body:  'Use the scale sliders to make your object bigger or smaller on each axis.',
+    position: 'left',  action: 'next' },
+  { id: 'animate-object', target: '#popup-anim-section',
+    title: 'Animate Your Object',
+    body:  'Choose an animation template — Float, Land, Rotate or Slide In.',
+    position: 'left',  action: 'next' },
+  { id: 'lens',           target: '#lens-select',
+    title: 'Choose a Camera Lens',
+    body:  'Select a professional lens template to define the field of view and visual character.',
+    position: 'bottom', action: 'next' },
+  { id: 'ratio',          target: '#ratio-select',
+    title: 'Set the Output Ratio',
+    body:  'Choose your output aspect ratio — 16:9 for widescreen, 1:1 for social, 9:16 for Reels.',
+    position: 'bottom', action: 'next' },
+  { id: 'camera-motion',  target: '#cam-move-radios',
+    title: 'Choose a Camera Movement',
+    body:  'Select how the camera will move — Push In, Pull Out, Dolly, Pan or Tilt.',
+    position: 'bottom', action: 'next' },
+  { id: 'auto-record',    target: '#rec-with-move-btn',
+    title: 'Enable Auto-Recording',
+    body:  'Turn on Auto-Recording to automatically start recording when you press Play.',
+    position: 'bottom', action: 'next' },
+  { id: 'play',           target: '#cam-play-btn',
+    title: 'Press Play',
+    body:  'Preview or record your camera movement. The viewport will animate the selected motion.',
+    position: 'bottom', action: 'click' },
+  { id: 'stop',           target: '#cam-stop-btn',
+    title: 'Stop the Recording',
+    body:  'Press Stop when you are happy with the take. Your MP4 will be saved automatically.',
+    position: 'bottom', action: 'click' },
+  { id: 'mp4-ready',      target: '.step-card[data-step-key="mp4"]',
+    title: 'Your MP4 is Ready',
+    body:  'Your recording appears here in the timeline. You can now proceed to AI generation.',
+    position: 'top',   action: 'next' }
+];
+
+let tourActive = false;
+let tourStep = 0;
+let _tourClickHandler = null;
+let _tourClickTarget = null;
+let _tourResizeHandler = null;
+
+function shouldShowTour() {
+  return !localStorage.getItem('refluent_tour_completed');
+}
+
+function startTour(fromStep = 0) {
+  if (tourActive) return;
+  tourActive = true;
+  tourStep = fromStep;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'tour-overlay';
+  document.body.appendChild(overlay);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'tour-spotlight-svg';
+  svg.innerHTML = `
+    <defs>
+      <mask id="spotlight-mask">
+        <rect width="100%" height="100%" fill="white"/>
+        <rect id="spotlight-cutout" rx="6" fill="black"/>
+      </mask>
+    </defs>
+    <rect width="100%" height="100%" fill="rgba(0,0,0,0.82)" mask="url(#spotlight-mask)"/>`;
+  document.body.appendChild(svg);
+
+  const tooltip = document.createElement('div');
+  tooltip.id = 'tour-tooltip';
+  document.body.appendChild(tooltip);
+
+  _tourResizeHandler = () => {
+    const step = TOUR_STEPS[tourStep];
+    if (!step) return;
+    const target = document.querySelector(step.target);
+    if (target) updateSpotlightAndTooltip(target, step);
+  };
+  window.addEventListener('resize', _tourResizeHandler);
+
+  showTourStep(tourStep);
+}
+
+function updateSpotlightAndTooltip(target, step) {
+  const rect = target.getBoundingClientRect();
+  const pad = 8;
+  const cutout = document.getElementById('spotlight-cutout');
+  if (cutout) {
+    cutout.setAttribute('x', rect.left - pad);
+    cutout.setAttribute('y', rect.top - pad);
+    cutout.setAttribute('width',  rect.width  + pad * 2);
+    cutout.setAttribute('height', rect.height + pad * 2);
+  }
+  positionTourTooltip(rect, step.position);
+}
+
+function showTourStep(index) {
+  const step = TOUR_STEPS[index];
+  if (!step) { endTour(true); return; }
+
+  // Detach previous click-advance handler if any
+  if (_tourClickHandler && _tourClickTarget) {
+    _tourClickTarget.removeEventListener('click', _tourClickHandler);
+    _tourClickHandler = null;
+    _tourClickTarget = null;
+  }
+
+  const target = document.querySelector(step.target);
+  const rect = target ? target.getBoundingClientRect() : null;
+  const hasSize = rect && (rect.width > 0 || rect.height > 0);
+  if (!target || !hasSize) {
+    // Target missing or hidden — skip forward
+    setTimeout(() => { tourStep++; showTourStep(tourStep); }, 200);
+    return;
+  }
+
+  updateSpotlightAndTooltip(target, step);
+
+  const tooltip = document.getElementById('tour-tooltip');
+  tooltip.className = `position-${step.position}`;
+  const isLast = index === TOUR_STEPS.length - 1;
+  const nextLabel = isLast ? 'Finish ✓' : (step.action === 'click' ? 'Click it →' : 'Next →');
+  tooltip.innerHTML = `
+    <div class="tour-tt-head">
+      <div class="tour-tt-count">${index + 1} / ${TOUR_STEPS.length}</div>
+      <button id="tour-skip" class="tour-tt-skip">Skip tour</button>
+    </div>
+    <div class="tour-tt-title">${step.title}</div>
+    <div class="tour-tt-body">${step.body}</div>
+    <div class="tour-tt-actions">
+      ${index > 0 ? '<button id="tour-prev" class="tour-tt-btn tour-tt-btn-ghost">← Back</button>' : ''}
+      <button id="tour-next" class="tour-tt-btn tour-tt-btn-primary">${nextLabel}</button>
+    </div>`;
+
+  document.getElementById('tour-skip').addEventListener('click', () => endTour(true));
+  document.getElementById('tour-next').addEventListener('click', () => {
+    tourStep++;
+    showTourStep(tourStep);
+  });
+  const prevBtn = document.getElementById('tour-prev');
+  if (prevBtn) prevBtn.addEventListener('click', () => {
+    tourStep--;
+    showTourStep(tourStep);
+  });
+
+  if (step.action === 'click') {
+    _tourClickTarget = target;
+    _tourClickHandler = () => {
+      target.removeEventListener('click', _tourClickHandler);
+      _tourClickHandler = null;
+      _tourClickTarget = null;
+      setTimeout(() => { tourStep++; showTourStep(tourStep); }, 600);
+    };
+    target.addEventListener('click', _tourClickHandler);
+  }
+}
+
+function positionTourTooltip(targetRect, position) {
+  const tooltip = document.getElementById('tour-tooltip');
+  if (!tooltip) return;
+  const tw = tooltip.offsetWidth  || 280;
+  const th = tooltip.offsetHeight || 160;
+  const pad = 16;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left, top;
+  switch (position) {
+    case 'right':
+      left = targetRect.right + pad;
+      top  = targetRect.top + targetRect.height / 2 - th / 2;
+      break;
+    case 'left':
+      left = targetRect.left - tw - pad;
+      top  = targetRect.top + targetRect.height / 2 - th / 2;
+      break;
+    case 'bottom':
+      left = targetRect.left + targetRect.width / 2 - tw / 2;
+      top  = targetRect.bottom + pad;
+      break;
+    case 'top':
+      left = targetRect.left + targetRect.width / 2 - tw / 2;
+      top  = targetRect.top - th - pad;
+      break;
+    default:
+      left = targetRect.right + pad;
+      top  = targetRect.top;
+  }
+  left = Math.max(pad, Math.min(left, vw - tw - pad));
+  top  = Math.max(pad, Math.min(top,  vh - th - pad));
+  tooltip.style.left = left + 'px';
+  tooltip.style.top  = top + 'px';
+}
+
+function endTour(markCompleted) {
+  tourActive = false;
+  if (_tourClickHandler && _tourClickTarget) {
+    _tourClickTarget.removeEventListener('click', _tourClickHandler);
+    _tourClickHandler = null;
+    _tourClickTarget = null;
+  }
+  if (_tourResizeHandler) {
+    window.removeEventListener('resize', _tourResizeHandler);
+    _tourResizeHandler = null;
+  }
+  document.getElementById('tour-overlay')?.remove();
+  document.getElementById('tour-spotlight-svg')?.remove();
+  document.getElementById('tour-tooltip')?.remove();
+  if (markCompleted) localStorage.setItem('refluent_tour_completed', 'true');
+}
+
+window.electronAPI.onStartTour(() => {
+  localStorage.removeItem('refluent_tour_completed');
+  if (tourActive) endTour(false);
+  startTour(0);
+});
 
 // ---- Mission I: Auto Save ----
 let _autosaveTimer = null;

@@ -110,6 +110,15 @@ function buildMenu() {
     {
       role: 'window',
       submenu: [{ role: 'minimize' }, { role: 'close' }]
+    },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Start Guided Tour',
+          click: () => { if (mainWindow) mainWindow.webContents.send('start-tour'); }
+        }
+      ]
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

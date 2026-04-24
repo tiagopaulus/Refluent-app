@@ -36,5 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   respondSaveCheck: (response) => ipcRenderer.invoke('respond-save-check', response),
   onSaveAndQuit: (callback) => ipcRenderer.on('save-and-quit', () => callback()),
   confirmQuit: () => ipcRenderer.invoke('confirm-quit'),
-  showUnsavedDialog: (sceneName, action) => ipcRenderer.invoke('show-unsaved-dialog', sceneName, action)
+  showUnsavedDialog: (sceneName, action) => ipcRenderer.invoke('show-unsaved-dialog', sceneName, action),
+  // Guided tour
+  onStartTour: (callback) => ipcRenderer.on('start-tour', () => callback())
 });
