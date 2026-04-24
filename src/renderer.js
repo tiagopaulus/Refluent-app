@@ -107,14 +107,35 @@ function updateObjectAnimations(delta) {
 
 // ---- Pipeline State ----
 const pipelineState = {
+  // Stage 1 — Viewport
   mp4Path: null,
   mp4Filename: null,
+
+  // Stage 2 — Frame Selection
   referenceFrame: null,
-  referenceImage: null,
-  prompt: null,
-  aiResultUrl: null,
-  upscaleUrl: null,
-  currentStep: 0
+  referenceFrameImage: null,
+
+  // Stage 3 — NanoBanana
+  nanoBananaPrompt: null,
+  nanoBananaReferenceImages: [],
+  nanoBananaResultImage: null,
+  nanoBananaSkipped: false,
+
+  // Stage 4 — Seedance
+  seedancePrompt: null,
+  seedanceReferenceImage: null,
+  seedanceResultVideo: null,
+  seedanceSkipped: false,
+
+  // Stage 5 — Upscale
+  upscalePrompt: null,
+  upscaleResolution: '4k',
+  upscaleResult: null,
+  upscaleSkipped: false,
+
+  // Global
+  currentStep: 0,
+  activeSteps: ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale']
 };
 
 // ---- Scene Setup ----
@@ -1513,9 +1534,9 @@ recordBtn.addEventListener('click', async () => {
       console.log('Saved to', result.filePath);
       pipelineState.mp4Path = result.filePath;
       pipelineState.mp4Filename = result.filePath.split(/[\\/]/).pop();
-      const _s1c = document.querySelector('.step-card[data-step="0"] .step-content');
+      const _s1c = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
       if (_s1c) _s1c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${pipelineState.mp4Filename}</div>`;
-      activateStep(1);
+      activateStep('frame');
     } else {
       if (result.message !== 'Canceled by user') {
         alert(getTranslation('exportFailed') + result.message);
@@ -2870,10 +2891,19 @@ async function saveScene(saveAs = false) {
       mp4Path: pipelineState.mp4Path,
       mp4Filename: pipelineState.mp4Filename,
       referenceFrame: pipelineState.referenceFrame,
-      referenceImage: pipelineState.referenceImage,
-      prompt: pipelineState.prompt,
-      aiResultUrl: pipelineState.aiResultUrl,
-      upscaleUrl: pipelineState.upscaleUrl
+      referenceFrameImage: pipelineState.referenceFrameImage,
+      nanoBananaPrompt: pipelineState.nanoBananaPrompt,
+      nanoBananaReferenceImages: [...(pipelineState.nanoBananaReferenceImages || [])],
+      nanoBananaResultImage: pipelineState.nanoBananaResultImage,
+      nanoBananaSkipped: pipelineState.nanoBananaSkipped,
+      seedancePrompt: pipelineState.seedancePrompt,
+      seedanceReferenceImage: pipelineState.seedanceReferenceImage,
+      seedanceResultVideo: pipelineState.seedanceResultVideo,
+      seedanceSkipped: pipelineState.seedanceSkipped,
+      upscalePrompt: pipelineState.upscalePrompt,
+      upscaleResolution: pipelineState.upscaleResolution,
+      upscaleResult: pipelineState.upscaleResult,
+      upscaleSkipped: pipelineState.upscaleSkipped
     },
 
     counters: {
@@ -3138,7 +3168,13 @@ async function loadScene(filePath) {
 
     if (Array.isArray(l.nodeConnections)) {
       nodeConnections.length = 0;
-      l.nodeConnections.forEach(c => nodeConnections.push({ ...c }));
+      const validNodes = new Set(['mp4', 'frame', 'nanobanana', 'seedance', 'upscale']);
+      l.nodeConnections.forEach(c => {
+        if (validNodes.has(c.fromNode) && validNodes.has(c.toNode)) {
+          nodeConnections.push({ ...c });
+        }
+      });
+      if (nodeConnections.length === 0) initDefaultConnections();
     }
 
     updateNodePositions();
@@ -3151,19 +3187,27 @@ async function loadScene(filePath) {
   if (data.pipeline) {
     const p = data.pipeline;
     Object.assign(pipelineState, p);
-    activateStep(p.currentStep || 0);
+    if (!Array.isArray(pipelineState.nanoBananaReferenceImages)) {
+      pipelineState.nanoBananaReferenceImages = [];
+    }
+    rebuildSimplePanel();
+    buildNodeEditor();
+    const startStep = pipelineState.mp4Path ? 'frame' : 'mp4';
+    activateStep(startStep);
     updateStepMediaPreviews();
     if (typeof updateNodeMediaPreviews === 'function') updateNodeMediaPreviews();
 
-    if (p.prompt) {
-      const promptStepContent = document.querySelector('.step-card[data-step-key="prompt"] .step-content');
-      if (promptStepContent && !promptStepContent.querySelector('input, textarea, button')) {
-        promptStepContent.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${p.prompt}</div>`;
-      }
-      const promptNodeContent = document.querySelector('.node-card[data-node="prompt"] .node-content');
-      if (promptNodeContent && !promptNodeContent.querySelector('input, textarea, button')) {
-        promptNodeContent.innerHTML = `<span style="font-size:9px;color:#aaa;">${p.prompt}</span>`;
-      }
+    if (pipelineState.nanoBananaPrompt) {
+      const el = document.querySelector('.step-card[data-step-key="nanobanana"] #nb-prompt');
+      if (el) el.value = pipelineState.nanoBananaPrompt;
+    }
+    if (pipelineState.seedancePrompt) {
+      const el = document.querySelector('.step-card[data-step-key="seedance"] #sd-prompt');
+      if (el) el.value = pipelineState.seedancePrompt;
+    }
+    if (pipelineState.upscalePrompt) {
+      const el = document.querySelector('.step-card[data-step-key="upscale"] #up-prompt');
+      if (el) el.value = pipelineState.upscalePrompt;
     }
   }
 
@@ -3447,71 +3491,74 @@ setLayout(savedLayout);
 
 // ---- Simple Mode Pipeline ----
 
-function activateStep(stepIndex) {
-  const cards = document.querySelectorAll('.step-card');
-  cards.forEach((card, i) => {
-    card.classList.remove('active', 'complete');
-    if (i < stepIndex) card.classList.add('complete');
-    if (i === stepIndex) card.classList.add('active');
-  });
+function getActivePipelineSteps() {
+  const steps = ['mp4', 'frame'];
+  if (!pipelineState.nanoBananaSkipped) steps.push('nanobanana');
+  if (!pipelineState.seedanceSkipped) steps.push('seedance');
+  if (!pipelineState.upscaleSkipped) steps.push('upscale');
+  pipelineState.activeSteps = steps;
+  return steps;
+}
+
+function activateStep(stepId) {
+  const activeSteps = getActivePipelineSteps();
+  let stepIndex = activeSteps.indexOf(stepId);
+  if (stepIndex === -1) stepIndex = 0;
   pipelineState.currentStep = stepIndex;
+
+  document.querySelectorAll('.step-card').forEach(card => {
+    const id = card.dataset.stepKey;
+    const idx = activeSteps.indexOf(id);
+    card.classList.remove('active', 'complete');
+    if (idx === -1) return;
+    if (idx < stepIndex) card.classList.add('complete');
+    if (idx === stepIndex) card.classList.add('active');
+  });
+
   if (typeof syncNodeEditor === 'function') syncNodeEditor();
   if (typeof updateStepMediaPreviews === 'function') updateStepMediaPreviews();
   if (typeof drawSimpleConnections === 'function') drawSimpleConnections();
+}
+
+function advanceFromStep(stepId) {
+  const activeSteps = getActivePipelineSteps();
+  const idx = activeSteps.indexOf(stepId);
+  if (idx === -1) return;
+  const next = activeSteps[idx + 1];
+  if (next) activateStep(next);
+}
+
+function onNanoBananaComplete(imageUrl) {
+  pipelineState.nanoBananaResultImage = imageUrl;
+  pipelineState.seedanceReferenceImage = imageUrl;
+  const refArea = document.getElementById('sd-ref-image-area');
+  if (refArea) {
+    refArea.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+  }
+  advanceFromStep('nanobanana');
 }
 
 function resetPipeline() {
   pipelineState.mp4Path = null;
   pipelineState.mp4Filename = null;
   pipelineState.referenceFrame = null;
-  pipelineState.referenceImage = null;
-  pipelineState.prompt = null;
-  pipelineState.aiResultUrl = null;
-  pipelineState.upscaleUrl = null;
+  pipelineState.referenceFrameImage = null;
+  pipelineState.nanoBananaPrompt = null;
+  pipelineState.nanoBananaReferenceImages = [];
+  pipelineState.nanoBananaResultImage = null;
+  pipelineState.nanoBananaSkipped = false;
+  pipelineState.seedancePrompt = null;
+  pipelineState.seedanceReferenceImage = null;
+  pipelineState.seedanceResultVideo = null;
+  pipelineState.seedanceSkipped = false;
+  pipelineState.upscalePrompt = null;
+  pipelineState.upscaleResolution = '4k';
+  pipelineState.upscaleResult = null;
+  pipelineState.upscaleSkipped = false;
   pipelineState.currentStep = 0;
-  document.querySelectorAll('.step-content').forEach(el => { el.innerHTML = ''; });
-  const _s1c = document.querySelector('.step-card[data-step="0"] .step-content');
-  if (_s1c) _s1c.innerHTML = '<span style="color:#555;font-size:9px;">recording.mp4</span>';
-  activateStep(0);
-}
-
-async function triggerAIRender() {
-  const step5Content = document.querySelector('.step-card[data-step="4"] .step-content');
-  if (!step5Content) return;
-  step5Content.innerHTML = `
-    <div style="text-align:center;padding:8px;">
-      <div style="font-size:9px;color:#888;">Rendering...</div>
-      <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
-    </div>`;
-  try {
-    const job = await window.electronAPI.aiVideoRender({
-      mp4Path: pipelineState.mp4Path,
-      prompt: pipelineState.prompt,
-      referenceFrame: pipelineState.referenceFrame
-    });
-    if (!job.success) {
-      step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">${job.error || 'Something went wrong.'}</div>`;
-      return;
-    }
-    const poll = setInterval(async () => {
-      const status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
-      if (status.status === 'complete') {
-        clearInterval(poll);
-        pipelineState.aiResultUrl = status.videoUrl;
-        step5Content.innerHTML = `
-          <div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">
-            ✓ Render complete<br>
-            <span style="color:#555;font-size:8px;">${status.videoUrl}</span>
-          </div>`;
-        activateStep(5);
-      } else if (status.status === 'error') {
-        clearInterval(poll);
-        step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong. Try again.</div>`;
-      }
-    }, 1000);
-  } catch (err) {
-    step5Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong.</div>`;
-  }
+  rebuildSimplePanel();
+  buildNodeEditor();
+  activateStep('mp4');
 }
 
 // ---- Mission K: Simple Mode rebuild ----
@@ -3524,21 +3571,19 @@ const simpleModeState = {
 };
 
 const stepWorldPositions = {
-  mp4:      { x: 20,  y: 20 },
-  frame:    { x: 180, y: 20 },
-  refimage: { x: 340, y: 20 },
-  prompt:   { x: 500, y: 20 },
-  render:   { x: 660, y: 20 },
-  upscale:  { x: 820, y: 20 }
+  mp4:        { x: 20,  y: 20 },
+  frame:      { x: 240, y: 20 },
+  nanobanana: { x: 460, y: 20 },
+  seedance:   { x: 680, y: 20 },
+  upscale:    { x: 900, y: 20 }
 };
 
 const stepDefs = [
-  { id: 'mp4',      idx: 0, i18nKey: 'step1Label', fallback: 'MP4 Ready',         skippable: false },
-  { id: 'frame',    idx: 1, i18nKey: 'step2Label', fallback: 'Select Frame',      skippable: true  },
-  { id: 'refimage', idx: 2, i18nKey: 'step3Label', fallback: 'Reference Image',   skippable: true  },
-  { id: 'prompt',   idx: 3, i18nKey: 'step4Label', fallback: 'Nanobanana Prompt', skippable: true  },
-  { id: 'render',   idx: 4, i18nKey: 'step5Label', fallback: 'AI Render',         skippable: false },
-  { id: 'upscale',  idx: 5, i18nKey: 'step6Label', fallback: 'Upscale',           skippable: true  }
+  { id: 'mp4',        idx: 0, i18nKey: 'stepMp4Label',        fallback: 'MP4 Ready',        skippable: false },
+  { id: 'frame',      idx: 1, i18nKey: 'stepFrameLabel',      fallback: 'Reference Frame',  skippable: false },
+  { id: 'nanobanana', idx: 2, i18nKey: 'stepNanoBananaLabel', fallback: 'NanaBanana',       skippable: true  },
+  { id: 'seedance',   idx: 3, i18nKey: 'stepSeedanceLabel',   fallback: 'Seedance',         skippable: true  },
+  { id: 'upscale',    idx: 4, i18nKey: 'stepUpscaleLabel',    fallback: 'Upscale',          skippable: true  }
 ];
 
 function simpleWorldToScreen(wx, wy) {
@@ -3556,16 +3601,17 @@ function drawSimpleGrid() {
 
 function updateStepPositions() {
   const s = simpleModeState.scale;
-  const BASE = 140;
-  const scaledSize = BASE * s;
+  const BASE_W = 200;
+  const BASE_MIN_H = 140;
   Object.keys(stepWorldPositions).forEach(stepId => {
     const card = document.querySelector(`.step-card[data-step-key="${stepId}"]`);
     if (!card) return;
     const screen = simpleWorldToScreen(stepWorldPositions[stepId].x, stepWorldPositions[stepId].y);
     card.style.left = screen.x + 'px';
     card.style.top = screen.y + 'px';
-    card.style.width = scaledSize + 'px';
-    card.style.height = scaledSize + 'px';
+    card.style.width = (BASE_W * s) + 'px';
+    card.style.height = 'auto';
+    card.style.minHeight = (BASE_MIN_H * s) + 'px';
     card.style.fontSize = Math.max(8, 11 * s) + 'px';
     card.style.borderRadius = Math.max(3, 8 * s) + 'px';
 
@@ -3635,7 +3681,7 @@ function drawSimpleConnections() {
       </marker>
     </defs>`;
   const panelRect = panel.getBoundingClientRect();
-  const stepOrder = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
+  const stepOrder = ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale'];
 
   const activeIds = stepOrder.filter(id => {
     const c = document.querySelector(`.step-card[data-step-key="${id}"]`);
@@ -3672,18 +3718,12 @@ function toggleSkipStep(stepId) {
   const isSkipped = card.classList.toggle('skipped');
   const btn = card.querySelector('.step-skip-btn');
   if (btn) btn.textContent = isSkipped ? 'Include' : 'Skip';
+  const skipField = `${stepId}Skipped`;
+  if (skipField in pipelineState) pipelineState[skipField] = isSkipped;
   console.log(`[Pipeline] Step ${stepId} ${isSkipped ? 'skipped' : 'restored'}`);
+  getActivePipelineSteps();
   drawSimpleConnections();
-  updatePipelineFromSkips();
-}
-
-function updatePipelineFromSkips() {
-  const allSteps = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
-  const activeSteps = allSteps.filter(id => {
-    const card = document.querySelector(`.step-card[data-step-key="${id}"]`);
-    return card && !card.classList.contains('skipped');
-  });
-  console.log('[Pipeline] active steps:', activeSteps);
+  syncNodeEditor();
 }
 
 function updateStepMediaPreviews() {
@@ -3700,18 +3740,286 @@ function updateStepMediaPreviews() {
       }
     }
   }
-  if (pipelineState.referenceImage) {
-    const content = document.querySelector('.step-card[data-step-key="refimage"] .step-content');
-    if (content && !content.querySelector('input, textarea, button')) {
-      const safe = `file:///${pipelineState.referenceImage.replace(/\\/g, '/')}`;
-      content.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;">`;
-    }
+}
+
+function _bodyForStep(step) {
+  const tplBtn = `<button class="template-picker-btn" data-stage="${step.id}">⚡ Templates</button>`;
+  if (step.id === 'mp4') {
+    return '<div class="step-content"><span style="color:#555;font-size:9px;">recording.mp4</span></div>';
   }
-  if (pipelineState.aiResultUrl && !pipelineState.aiResultUrl.startsWith('mock://')) {
-    const content = document.querySelector('.step-card[data-step-key="render"] .step-content');
-    if (content && !content.querySelector('input, textarea, button')) {
-      content.innerHTML = `<video src="${pipelineState.aiResultUrl}" style="width:100%;height:100%;object-fit:cover;" autoplay loop muted></video>`;
+  if (step.id === 'frame') {
+    return `
+      <div class="step-content frame-body">
+        <div class="pipeline-label">Frame (seconds)</div>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input type="number" class="pipeline-input" id="frame-input" min="0" step="0.1" value="0">
+          <button id="confirm-frame" class="pipeline-confirm-btn">✓</button>
+        </div>
+        <div class="pipeline-hint-block">Guides NanaBanana's camera angle and proportions</div>
+      </div>`;
+  }
+  if (step.id === 'nanobanana') {
+    return `
+      <div class="step-content nanobanana-body">
+        <div class="pipeline-label-row">
+          <span class="pipeline-label">Reference Images</span>
+          <span id="nb-img-hint" class="pipeline-hint">Strong direction ✓</span>
+        </div>
+        <div id="nb-ref-images" class="nb-ref-images">
+          <div class="ref-img-slot" data-slot="0">+</div>
+          <div class="ref-img-slot" data-slot="1">+</div>
+          <div class="ref-img-slot" data-slot="2">+</div>
+        </div>
+        <div class="pipeline-label-row">
+          <span class="pipeline-label">Prompt</span>
+          ${tplBtn}
+        </div>
+        <textarea id="nb-prompt" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
+        <button id="nb-generate-btn" class="pipeline-generate-btn">Generate Image →</button>
+      </div>`;
+  }
+  if (step.id === 'seedance') {
+    return `
+      <div class="step-content seedance-body">
+        <div class="pipeline-label">Visual Reference</div>
+        <div id="sd-ref-image-area" class="sd-ref-image-area">Auto-filled from NanaBanana</div>
+        <button id="sd-override-ref-btn" class="sd-override-ref-btn">+ Use different image</button>
+        <div class="pipeline-label-row">
+          <span class="pipeline-label">Prompt</span>
+          ${tplBtn}
+        </div>
+        <textarea id="sd-prompt" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
+        <button id="sd-generate-btn" class="pipeline-generate-btn">Generate Video →</button>
+      </div>`;
+  }
+  if (step.id === 'upscale') {
+    return `
+      <div class="step-content upscale-body">
+        <div class="pipeline-label-row">
+          <span class="pipeline-label">Prompt</span>
+          ${tplBtn}
+        </div>
+        <textarea id="up-prompt" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
+        <div class="upscale-res-row">
+          <button class="upscale-res-btn active" data-res="4k">4K</button>
+          <button class="upscale-res-btn" data-res="8k">8K</button>
+        </div>
+        <button id="up-generate-btn" class="pipeline-generate-btn">Upscale →</button>
+      </div>`;
+  }
+  return '<div class="step-content"></div>';
+}
+
+function buildStepCardHTML(step) {
+  const label = getTranslation(step.i18nKey) || step.fallback;
+  const skipBtn = step.skippable ? '<button class="step-skip-btn" title="Toggle skip">Skip</button>' : '';
+  return `
+    <div class="step-header">
+      <span class="step-name" data-i18n="${step.i18nKey}">${label}</span>
+      <div style="display:flex;align-items:center;gap:4px;">
+        <span class="step-status-dot"></span>
+        ${skipBtn}
+      </div>
+    </div>
+    <div class="step-body">${_bodyForStep(step)}</div>`;
+}
+
+function wireRefImageSlots(scope) {
+  const slots = (scope || document).querySelectorAll('.ref-img-slot');
+  slots.forEach(slot => {
+    const slotIndex = parseInt(slot.dataset.slot, 10);
+    const existing = pipelineState.nanoBananaReferenceImages[slotIndex];
+    if (existing) {
+      const safe = `file:///${existing.replace(/\\/g, '/')}`;
+      slot.innerHTML = `<img src="${safe}">`;
+      slot.classList.add('filled');
     }
+    slot.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const filePath = await window.electronAPI.openFileDialog({
+        filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+      });
+      if (!filePath) return;
+      pipelineState.nanoBananaReferenceImages[slotIndex] = filePath;
+      const safe = `file:///${filePath.replace(/\\/g, '/')}`;
+      slot.innerHTML = `<img src="${safe}">`;
+      slot.classList.add('filled');
+      updateRefImageHint();
+    });
+    slot.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      pipelineState.nanoBananaReferenceImages[slotIndex] = null;
+      slot.innerHTML = '+';
+      slot.classList.remove('filled');
+      updateRefImageHint();
+    });
+  });
+  updateRefImageHint();
+}
+
+function updateRefImageHint() {
+  const filled = pipelineState.nanoBananaReferenceImages.filter(Boolean).length;
+  const hint = document.getElementById('nb-img-hint');
+  if (!hint) return;
+  if (filled <= 1) {
+    hint.textContent = 'Strong, clear direction ✓';
+    hint.style.color = 'var(--accent)';
+  } else if (filled === 2) {
+    hint.textContent = 'Balanced reference';
+    hint.style.color = 'var(--text-secondary)';
+  } else {
+    hint.textContent = 'Complex blend — use carefully ⚠';
+    hint.style.color = '#c4914a';
+  }
+}
+
+async function runNanoBananaGenerate(scope) {
+  const root = scope || document;
+  const promptEl = root.querySelector('#nb-prompt');
+  if (!promptEl) return;
+  pipelineState.nanoBananaPrompt = promptEl.value.trim();
+  if (!pipelineState.nanoBananaPrompt) return;
+  const btn = root.querySelector('#nb-generate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  try {
+    const job = await window.electronAPI.aiImageGenerate({
+      prompt: pipelineState.nanoBananaPrompt,
+      referenceImagePath: pipelineState.nanoBananaReferenceImages.filter(Boolean)[0] || null
+    });
+    if (!job || !job.success) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
+      return;
+    }
+    const poll = setInterval(async () => {
+      const status = await window.electronAPI.aiImageStatus({ jobId: job.jobId });
+      if (status.status === 'complete') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
+        onNanoBananaComplete(status.imageUrl || status.imagePath || 'mock://nb.png');
+      } else if (status.status === 'error') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
+      }
+    }, 800);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Image →'; }
+  }
+}
+
+async function runSeedanceGenerate(scope) {
+  const root = scope || document;
+  const promptEl = root.querySelector('#sd-prompt');
+  if (!promptEl) return;
+  pipelineState.seedancePrompt = promptEl.value.trim();
+  if (!pipelineState.seedancePrompt) return;
+  const btn = root.querySelector('#sd-generate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+  try {
+    const job = await window.electronAPI.aiVideoRender({
+      mp4Path: pipelineState.mp4Path,
+      prompt: pipelineState.seedancePrompt,
+      referenceFrame: pipelineState.seedanceReferenceImage
+    });
+    if (!job || !job.success) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+      return;
+    }
+    const poll = setInterval(async () => {
+      const status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
+      if (status.status === 'complete') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+        pipelineState.seedanceResultVideo = status.videoUrl;
+        advanceFromStep('seedance');
+      } else if (status.status === 'error') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+      }
+    }, 800);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+  }
+}
+
+async function runUpscaleGenerate(scope) {
+  const root = scope || document;
+  const promptEl = root.querySelector('#up-prompt');
+  if (promptEl) pipelineState.upscalePrompt = promptEl.value.trim();
+  const btn = root.querySelector('#up-generate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Upscaling…'; }
+  try {
+    const scale = pipelineState.upscaleResolution === '8k' ? 8 : 4;
+    const job = await window.electronAPI.aiUpscale({
+      inputPath: pipelineState.seedanceResultVideo,
+      scale
+    });
+    if (!job || !job.success) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+      return;
+    }
+    const poll = setInterval(async () => {
+      const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
+      if (status.status === 'complete') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+        pipelineState.upscaleResult = status.outputUrl;
+      } else if (status.status === 'error') {
+        clearInterval(poll);
+        if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+      }
+    }, 800);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+  }
+}
+
+function wireStepCardInteractions(card, step) {
+  if (step.id === 'frame') {
+    const confirmBtn = card.querySelector('#confirm-frame');
+    if (confirmBtn) confirmBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const input = card.querySelector('#frame-input');
+      pipelineState.referenceFrame = input ? input.value : '0';
+      advanceFromStep('frame');
+    });
+  } else if (step.id === 'nanobanana') {
+    wireRefImageSlots(card);
+    const gen = card.querySelector('#nb-generate-btn');
+    if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runNanoBananaGenerate(card); });
+    const prompt = card.querySelector('#nb-prompt');
+    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
+  } else if (step.id === 'seedance') {
+    const override = card.querySelector('#sd-override-ref-btn');
+    if (override) override.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const filePath = await window.electronAPI.openFileDialog({
+        filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+      });
+      if (!filePath) return;
+      pipelineState.seedanceReferenceImage = filePath;
+      const area = card.querySelector('#sd-ref-image-area');
+      if (area) {
+        const safe = `file:///${filePath.replace(/\\/g, '/')}`;
+        area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+      }
+    });
+    const gen = card.querySelector('#sd-generate-btn');
+    if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runSeedanceGenerate(card); });
+    const prompt = card.querySelector('#sd-prompt');
+    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
+  } else if (step.id === 'upscale') {
+    card.querySelectorAll('.upscale-res-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        card.querySelectorAll('.upscale-res-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        pipelineState.upscaleResolution = btn.dataset.res;
+      });
+    });
+    const gen = card.querySelector('#up-generate-btn');
+    if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runUpscaleGenerate(card); });
+    const prompt = card.querySelector('#up-prompt');
+    if (prompt) prompt.addEventListener('click', (e) => e.stopPropagation());
   }
 }
 
@@ -3733,15 +4041,7 @@ function rebuildSimplePanel() {
     card.className = 'step-card';
     card.dataset.step = String(step.idx);
     card.dataset.stepKey = step.id;
-    card.innerHTML = `
-      <div class="step-header">
-        <span class="step-name" data-i18n="${step.i18nKey}">${getTranslation(step.i18nKey) || step.fallback}</span>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span class="step-status-dot"></span>
-          ${step.skippable ? '<button class="step-skip-btn" title="Toggle skip">Skip</button>' : ''}
-        </div>
-      </div>
-      <div class="step-body"><div class="step-content">${step.id === 'mp4' ? '<span style="color:#555;font-size:9px;">recording.mp4</span>' : ''}</div></div>`;
+    card.innerHTML = buildStepCardHTML(step);
     simplePanel.appendChild(card);
     makeStepDraggable(card);
     if (step.skippable) {
@@ -3751,6 +4051,7 @@ function rebuildSimplePanel() {
         toggleSkipStep(step.id);
       });
     }
+    wireStepCardInteractions(card, step);
   });
 
   // Floating zoom controls + reset (reset preserves legacy id)
@@ -3838,104 +4139,6 @@ function rebuildSimplePanel() {
 
 rebuildSimplePanel();
 
-// Step 2 — Select Frame
-const _step2Card = document.querySelector('.step-card[data-step="1"]');
-if (_step2Card) {
-  _step2Card.addEventListener('click', () => {
-    if (pipelineState.currentStep !== 1) return;
-    const step2Content = _step2Card.querySelector('.step-content');
-    step2Content.innerHTML = `
-      <div style="padding:4px;">
-        <div style="font-size:9px;color:#888;margin-bottom:3px;">Frame (seconds)</div>
-        <input type="number" id="frame-input" min="0" step="0.1" value="0"
-          style="width:60px;background:#222;border:1px solid #444;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">
-        <button id="confirm-frame"
-          style="margin-left:4px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px 6px;border-radius:3px;cursor:pointer;">✓</button>
-      </div>`;
-    document.getElementById('confirm-frame').addEventListener('click', () => {
-      pipelineState.referenceFrame = document.getElementById('frame-input').value;
-      step2Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">Frame: ${pipelineState.referenceFrame}s</div>`;
-      activateStep(2);
-    });
-  });
-}
-
-// Step 3 — Add Reference Image
-const _step3Card = document.querySelector('.step-card[data-step="2"]');
-if (_step3Card) {
-  _step3Card.addEventListener('click', async () => {
-    if (pipelineState.currentStep !== 2) return;
-    const filePath = await window.electronAPI.openFileDialog({
-      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png'] }]
-    });
-    if (!filePath) return;
-    pipelineState.referenceImage = filePath;
-    const filename = filePath.split(/[\\/]/).pop();
-    const step3Content = _step3Card.querySelector('.step-content');
-    step3Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${filename}</div>`;
-    activateStep(3);
-  });
-}
-
-// Step 4 — Prompt
-const _step4Card = document.querySelector('.step-card[data-step="3"]');
-if (_step4Card) {
-  _step4Card.addEventListener('click', () => {
-    if (pipelineState.currentStep !== 3) return;
-    const step4Content = _step4Card.querySelector('.step-content');
-    step4Content.innerHTML = `
-      <div style="padding:4px;">
-        <textarea id="prompt-input" rows="2" placeholder="Describe the scene..."
-          style="width:100%;background:#222;border:1px solid #444;color:#fff;font-size:9px;padding:3px;border-radius:3px;resize:none;box-sizing:border-box;"></textarea>
-        <button id="confirm-prompt"
-          style="width:100%;margin-top:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px;border-radius:3px;cursor:pointer;">Generate →</button>
-      </div>`;
-    document.getElementById('confirm-prompt').addEventListener('click', () => {
-      pipelineState.prompt = document.getElementById('prompt-input').value;
-      if (!pipelineState.prompt.trim()) return;
-      step4Content.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${pipelineState.prompt}</div>`;
-      activateStep(4);
-      triggerAIRender();
-    });
-  });
-}
-
-// Step 6 — Upscale
-const _step6Card = document.querySelector('.step-card[data-step="5"]');
-if (_step6Card) {
-  _step6Card.addEventListener('click', async () => {
-    if (pipelineState.currentStep !== 5) return;
-    const step6Content = _step6Card.querySelector('.step-content');
-    step6Content.innerHTML = `
-      <div style="text-align:center;padding:8px;">
-        <div style="font-size:9px;color:#888;">Upscaling...</div>
-        <div style="width:16px;height:16px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:4px auto;"></div>
-      </div>`;
-    try {
-      const job = await window.electronAPI.aiUpscale({ inputPath: pipelineState.aiResultUrl, scale: 4 });
-      if (!job.success) {
-        step6Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">${job.error || 'Upscale failed.'}</div>`;
-        return;
-      }
-      const poll = setInterval(async () => {
-        const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
-        if (status.status === 'complete') {
-          clearInterval(poll);
-          pipelineState.upscaleUrl = status.outputUrl;
-          step6Content.innerHTML = `
-            <div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">
-              ✓ Upscale ready<br>
-              <span style="color:#555;font-size:8px;">4K output</span>
-            </div>`;
-          activateStep(6);
-        }
-      }, 1000);
-    } catch (err) {
-      step6Content.innerHTML = `<div style="font-size:9px;color:#c44;padding:4px;">Something went wrong.</div>`;
-    }
-  });
-}
-
 // Pipeline Reset
 const _pipelineResetBtn = document.getElementById('pipeline-reset-btn');
 if (_pipelineResetBtn) _pipelineResetBtn.addEventListener('click', resetPipeline);
@@ -3943,49 +4146,31 @@ if (_pipelineResetBtn) _pipelineResetBtn.addEventListener('click', resetPipeline
 // ---- Node Editor ----
 
 function syncNodeEditor() {
-  const nodeIds = ['mp4', 'frame', 'refimage', 'prompt', 'render', 'upscale'];
-  const nodeContents = [
-    pipelineState.mp4Filename
-      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.mp4Filename}</span>`
-      : '<span style="font-size:9px;color:#555;">Waiting for recording…</span>',
-    pipelineState.referenceFrame !== null
-      ? `<span style="font-size:9px;color:#aaa;">Frame: ${pipelineState.referenceFrame}s</span>`
-      : '',
-    pipelineState.referenceImage
-      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.referenceImage.split(/[\\/]/).pop()}</span>`
-      : '',
-    pipelineState.prompt
-      ? `<span style="font-size:9px;color:#aaa;">${pipelineState.prompt}</span>`
-      : '',
-    pipelineState.aiResultUrl
-      ? '<span style="font-size:9px;color:#aaa;">✓ Render complete</span>'
-      : (pipelineState.currentStep === 4
-          ? '<div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>'
-          : ''),
-    pipelineState.upscaleUrl
-      ? '<span style="font-size:9px;color:#aaa;">✓ 4K ready</span>'
-      : ''
-  ];
-
-  nodeIds.forEach((nodeId, i) => {
+  const activeSteps = getActivePipelineSteps();
+  const nodeIds = ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale'];
+  nodeIds.forEach(nodeId => {
     const node = document.querySelector(`.node-card[data-node="${nodeId}"]`);
     if (!node) return;
     const dot = node.querySelector('.node-status-dot');
-    const nodeContent = node.querySelector('.node-content');
-    node.classList.remove('node-inactive', 'node-active', 'node-complete', 'node-error');
-    if (i < pipelineState.currentStep) {
+    node.classList.remove('node-inactive', 'node-active', 'node-complete', 'node-error', 'node-skipped');
+    const skipField = `${nodeId}Skipped`;
+    const isSkipped = pipelineState[skipField] === true;
+    if (isSkipped) {
+      node.classList.add('node-skipped');
+      if (dot) { dot.style.background = '#444'; dot.style.animation = ''; }
+      return;
+    }
+    const activeIdx = activeSteps.indexOf(nodeId);
+    if (activeIdx === -1) return;
+    if (activeIdx < pipelineState.currentStep) {
       node.classList.add('node-complete');
       if (dot) { dot.style.background = '#3a7a3a'; dot.style.animation = ''; }
-    } else if (i === pipelineState.currentStep) {
+    } else if (activeIdx === pipelineState.currentStep) {
       node.classList.add('node-active');
       if (dot) { dot.style.background = '#888'; dot.style.animation = 'pulse 2s infinite'; }
     } else {
       node.classList.add('node-inactive');
       if (dot) { dot.style.background = '#333'; dot.style.animation = ''; }
-    }
-    if (nodeContent) {
-      const hasActiveForm = (i === pipelineState.currentStep) && nodeContent.querySelector('input, textarea, button');
-      if (!hasActiveForm) nodeContent.innerHTML = nodeContents[i] || '';
     }
   });
 
@@ -3994,112 +4179,7 @@ function syncNodeEditor() {
 }
 
 function wireNodeInteractions() {
-  // Node 1 — Select Frame
-  const _nFrame = document.querySelector('.node-card[data-node="frame"]');
-  if (_nFrame) {
-    _nFrame.addEventListener('click', () => {
-      if (pipelineState.currentStep !== 1) return;
-      const nc = _nFrame.querySelector('.node-content');
-      nc.innerHTML = `
-        <div style="padding:2px 0;">
-          <div style="font-size:9px;color:#888;margin-bottom:3px;">Frame (seconds)</div>
-          <input type="number" id="node-frame-input" min="0" step="0.1" value="0"
-            style="width:55px;background:#222;border:1px solid #444;color:#fff;font-size:10px;padding:2px 4px;border-radius:3px;">
-          <button id="node-confirm-frame"
-            style="margin-left:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px 5px;border-radius:3px;cursor:pointer;">✓</button>
-        </div>`;
-      document.getElementById('node-confirm-frame').addEventListener('click', () => {
-        pipelineState.referenceFrame = document.getElementById('node-frame-input').value;
-        nc.innerHTML = `<span style="font-size:9px;color:#aaa;">Frame: ${pipelineState.referenceFrame}s</span>`;
-        const s2c = document.querySelector('.step-card[data-step="1"] .step-content');
-        if (s2c) s2c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">Frame: ${pipelineState.referenceFrame}s</div>`;
-        activateStep(2);
-      });
-    });
-  }
-
-  // Node 2 — Reference Image
-  const _nRef = document.querySelector('.node-card[data-node="refimage"]');
-  if (_nRef) {
-    _nRef.addEventListener('click', async () => {
-      if (pipelineState.currentStep !== 2) return;
-      const filePath = await window.electronAPI.openFileDialog({
-        filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png'] }]
-      });
-      if (!filePath) return;
-      pipelineState.referenceImage = filePath;
-      const filename = filePath.split(/[\\/]/).pop();
-      const nc = _nRef.querySelector('.node-content');
-      nc.innerHTML = `<span style="font-size:9px;color:#aaa;">${filename}</span>`;
-      const s3c = document.querySelector('.step-card[data-step="2"] .step-content');
-      if (s3c) s3c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${filename}</div>`;
-      activateStep(3);
-    });
-  }
-
-  // Node 3 — Prompt
-  const _nPrompt = document.querySelector('.node-card[data-node="prompt"]');
-  if (_nPrompt) {
-    _nPrompt.addEventListener('click', () => {
-      if (pipelineState.currentStep !== 3) return;
-      const nc = _nPrompt.querySelector('.node-content');
-      nc.innerHTML = `
-        <div style="padding:2px 0;">
-          <textarea id="node-prompt-input" rows="2" placeholder="Describe the scene…"
-            style="width:100%;background:#222;border:1px solid #444;color:#fff;font-size:9px;padding:3px;border-radius:3px;resize:none;box-sizing:border-box;"></textarea>
-          <button id="node-confirm-prompt"
-            style="width:100%;margin-top:3px;background:#2a2a2a;border:1px solid #555;color:#fff;font-size:9px;padding:2px;border-radius:3px;cursor:pointer;">Generate →</button>
-        </div>`;
-      document.getElementById('node-confirm-prompt').addEventListener('click', () => {
-        pipelineState.prompt = document.getElementById('node-prompt-input').value;
-        if (!pipelineState.prompt.trim()) return;
-        nc.innerHTML = `<span style="font-size:9px;color:#aaa;">${pipelineState.prompt}</span>`;
-        const s4c = document.querySelector('.step-card[data-step="3"] .step-content');
-        if (s4c) s4c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;">${pipelineState.prompt}</div>`;
-        activateStep(4);
-        triggerAIRender();
-      });
-    });
-  }
-
-  // Node 5 — Upscale
-  const _nUpscale = document.querySelector('.node-card[data-node="upscale"]');
-  if (_nUpscale) {
-    _nUpscale.addEventListener('click', async () => {
-      if (pipelineState.currentStep !== 5) return;
-      const nc = _nUpscale.querySelector('.node-content');
-      nc.innerHTML = `
-        <div style="text-align:center;">
-          <div style="font-size:9px;color:#888;">Upscaling…</div>
-          <div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>
-        </div>`;
-      const s6c = document.querySelector('.step-card[data-step="5"] .step-content');
-      if (s6c) s6c.innerHTML = `
-        <div style="text-align:center;padding:6px;">
-          <div style="font-size:9px;color:#888;">Upscaling...</div>
-          <div style="width:14px;height:14px;border:2px solid #333;border-top-color:#888;border-radius:50%;animation:spin 1s linear infinite;margin:3px auto;"></div>
-        </div>`;
-      try {
-        const job = await window.electronAPI.aiUpscale({ inputPath: pipelineState.aiResultUrl, scale: 4 });
-        if (!job.success) {
-          nc.innerHTML = `<span style="font-size:9px;color:#c44;">${job.error || 'Upscale failed.'}</span>`;
-          return;
-        }
-        const poll = setInterval(async () => {
-          const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
-          if (status.status === 'complete') {
-            clearInterval(poll);
-            pipelineState.upscaleUrl = status.outputUrl;
-            nc.innerHTML = '<span style="font-size:9px;color:#aaa;">✓ 4K ready</span>';
-            if (s6c) s6c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;text-align:center;">✓ Upscale ready<br><span style="color:#555;font-size:8px;">4K output</span></div>`;
-            activateStep(6);
-          }
-        }, 1000);
-      } catch (err) {
-        nc.innerHTML = '<span style="font-size:9px;color:#c44;">Something went wrong.</span>';
-      }
-    });
-  }
+  // Nodes are status views; rich interaction lives in Simple Mode cards.
 }
 
 // ---- Mission J: Node Editor overhaul ----
@@ -4113,12 +4193,11 @@ const nodeEditorState = {
 
 // World-space positions — survive zoom/pan and update on drag
 const nodeBasePositions = {
-  mp4:      { x: 100, y: 60 },
-  frame:    { x: 100, y: 260 },
-  refimage: { x: 100, y: 460 },
-  prompt:   { x: 100, y: 660 },
-  render:   { x: 100, y: 860 },
-  upscale:  { x: 100, y: 1060 }
+  mp4:        { x: 100, y: 60 },
+  frame:      { x: 100, y: 300 },
+  nanobanana: { x: 380, y: 180 },
+  seedance:   { x: 660, y: 300 },
+  upscale:    { x: 940, y: 300 }
 };
 
 function worldToScreen(worldX, worldY) {
@@ -4457,11 +4536,11 @@ function updatePipelineFromConnections() {
 function initDefaultConnections() {
   if (nodeConnections.length > 0) return;
   const defaultFlow = [
-    { fromNode: 'mp4',      toNode: 'frame' },
-    { fromNode: 'frame',    toNode: 'refimage' },
-    { fromNode: 'refimage', toNode: 'prompt' },
-    { fromNode: 'prompt',   toNode: 'render' },
-    { fromNode: 'render',   toNode: 'upscale' }
+    { fromNode: 'mp4',        toNode: 'frame' },
+    { fromNode: 'frame',      toNode: 'nanobanana' },
+    { fromNode: 'nanobanana', toNode: 'seedance' },
+    { fromNode: 'mp4',        toNode: 'seedance' },
+    { fromNode: 'seedance',   toNode: 'upscale' }
   ];
   defaultFlow.forEach(c => nodeConnections.push({ ...c, id: Date.now() + Math.random() }));
   redrawNodeConnections();
@@ -4526,19 +4605,6 @@ function updateNodeMediaPreviews() {
       }
     }
   }
-  if (pipelineState.referenceImage) {
-    const refContent = document.querySelector('.node-card[data-node="refimage"] .node-content');
-    if (refContent && !refContent.querySelector('input, textarea, button')) {
-      const safeUrl = `file:///${pipelineState.referenceImage.replace(/\\/g, '/')}`;
-      refContent.innerHTML = `<div class="node-media-preview"><img src="${safeUrl}" alt="Reference"></div>`;
-    }
-  }
-  if (pipelineState.aiResultUrl && !pipelineState.aiResultUrl.startsWith('mock://')) {
-    const resultContent = document.querySelector('.node-card[data-node="render"] .node-content');
-    if (resultContent && !resultContent.querySelector('input, textarea, button')) {
-      resultContent.innerHTML = `<div class="node-media-preview"><video src="${pipelineState.aiResultUrl}" autoplay loop muted></video></div>`;
-    }
-  }
 }
 
 function _nodeCardHTML(id, title, subtitle, hasIn, hasOut, defaultContent) {
@@ -4559,12 +4625,11 @@ function buildNodeEditor() {
   if (!nodePanelEl) return;
 
   nodePanelEl.innerHTML =
-    _nodeCardHTML('mp4',      'MP4 Output',         'Step 1', false, true, '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
-    _nodeCardHTML('frame',    'Select Frame',       'Step 2', true,  true, '') +
-    _nodeCardHTML('refimage', 'Reference Image',    'Step 3', true,  true, '') +
-    _nodeCardHTML('prompt',   'Nanobanana Prompt',  'Step 4', true,  true, '') +
-    _nodeCardHTML('render',   'AI Render',          'Step 5', true,  true, '') +
-    _nodeCardHTML('upscale',  'Upscale',            'Step 6', true,  false, '');
+    _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
+    _nodeCardHTML('frame',      'Reference Frame',  'Step 2', true,  true,  '<span style="font-size:9px;color:#555;">Pick a frame in Simple Mode</span>') +
+    _nodeCardHTML('nanobanana', 'NanaBanana',       'Step 3', true,  true,  '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>') +
+    _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>') +
+    _nodeCardHTML('upscale',    'Upscale',          'Step 5', true,  false, '<span style="font-size:9px;color:#555;">Configure in Simple Mode</span>');
 
   // Grid canvas behind nodes
   const gridCanvas = document.createElement('canvas');
