@@ -355,14 +355,53 @@ debug('Adding UI event listeners...');
 
 // ---- UI Interaction ----
 
-// Navigation Hint Overlay
+// Navigation Hint Overlay — docked bottom-left of the viewport, user-dismissable
 try {
-  document.getElementById('close-hint-btn').addEventListener('click', () => {
-    document.getElementById('nav-hint').style.display = 'none';
-  });
+  const _navHintEl = document.getElementById('nav-hint');
+  const _vpEl = document.getElementById('viewport');
+  if (_navHintEl && _vpEl && _navHintEl.parentElement !== _vpEl) {
+    _vpEl.appendChild(_navHintEl);
+  }
+  const _closeBtn = document.getElementById('close-hint-btn');
+  if (_closeBtn) {
+    _closeBtn.style.right = '-22px';
+    _closeBtn.addEventListener('click', () => {
+      const hint = document.getElementById('nav-hint');
+      if (hint) hint.style.display = 'none';
+      localStorage.setItem('nav_hint_dismissed', 'true');
+    });
+  }
+  if (localStorage.getItem('nav_hint_dismissed') === 'true' && _navHintEl) {
+    _navHintEl.style.display = 'none';
+  }
   debug('Navigation hint listener added');
 } catch (e) {
   debug('ERROR adding navigation hint listener: ' + e.message);
+}
+
+function updateNavHintPosition() {
+  const navHint = document.getElementById('nav-hint') || document.querySelector('.nav-hint');
+  if (!navHint) return;
+  const simplePanelEl = document.getElementById('simple-panel');
+  const simplePanelHeight = simplePanelEl && simplePanelEl.style.display !== 'none' && navHint.parentElement !== document.getElementById('viewport')
+    ? simplePanelEl.offsetHeight
+    : 0;
+  const bottomToolbarHeight = 60;
+  navHint.style.bottom = (bottomToolbarHeight + simplePanelHeight + 36) + 'px';
+}
+updateNavHintPosition();
+
+function showNavHint() {
+  const hint = document.getElementById('nav-hint') || document.querySelector('.nav-hint');
+  if (!hint || hint.style.display === 'none') return;
+  hint.style.opacity = '1';
+}
+try {
+  if (renderer && renderer.domElement) {
+    renderer.domElement.addEventListener('mouseenter', showNavHint);
+  }
+} catch (e) {
+  // renderer may not be initialized yet; listener is best-effort
 }
 
 // Target Lock
@@ -3740,6 +3779,7 @@ function setLayout(mode) {
     if (selectedObject && !objectPopup.classList.contains('hidden')) {
       showObjectPopup(selectedObject);
     }
+    if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
   });
 }
 

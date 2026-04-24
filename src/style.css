@@ -161,54 +161,73 @@ button:active {
 
 #nav-hint {
   position: absolute;
-  bottom: 80px;
-  left: 20px;
-  background-color: rgba(0, 0, 0, 0.7);
-  padding: 10px 15px;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 12px;
-  pointer-events: auto;
+  bottom: 68px;
+  left: 16px;
+  z-index: 100;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 11px;
+  opacity: 1;
+  transition: opacity 0.5s ease;
 }
 
 #close-hint-btn {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  background: none;
-  border: none;
-  color: #fff;
-  padding: 0;
+  top: -6px;
+  right: -6px;
   width: 16px;
   height: 16px;
-  font-size: 16px;
-  line-height: 1em;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  font-size: 9px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-family: var(--font);
+  padding: 0;
+  pointer-events: all;
+  transition: color 0.15s, border-color 0.15s;
 }
-
 #close-hint-btn:hover {
-  color: #ff4d4d;
-  background: none;
-  border: none;
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--bg-raised);
 }
 
 .hint-row {
-  margin-bottom: 5px;
   display: flex;
   align-items: center;
-}
-
-.hint-row:last-child {
-  margin-bottom: 0;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  margin: 0;
 }
 
 .hint-icon {
   display: inline-block;
-  background-color: #444;
-  padding: 2px 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  margin-right: 5px;
-  font-weight: bold;
+  padding: 2px 6px;
+  margin: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 #gizmo-canvas {
@@ -1782,14 +1801,7 @@ input[type=range] {
   color: var(--text-primary);
 }
 
-/* --- Navigation hint --- */
-#nav-hint {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  color: var(--text-secondary);
-  font-family: var(--font);
-}
+/* --- Navigation hint (positioned/styled higher up in this file) --- */
 
 /* --- Preferences modal + welcome overlays --- */
 #prefs-overlay, #lang-welcome-overlay, #walkthrough-overlay, #recent-overlay {
