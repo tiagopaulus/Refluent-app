@@ -108,16 +108,31 @@ function updateObjectAnimations(delta) {
 // ---- Prompt Templates ----
 const PROMPT_TEMPLATES = {
   nanobanana: [
-    { name: 'Studio Match',     description: 'Clean commercial studio — preserves camera angle exactly',
-      prompt: 'Reproduce the exact camera angle, focal length, and framing of the reference frame. Maintain all proportions and spatial relationships. Apply a clean commercial studio aesthetic with controlled, soft lighting.' },
-    { name: 'Cinematic Grade',  description: 'Cinematic quality with dramatic lighting and color',
-      prompt: 'Match the perspective and composition of the reference frame precisely. Elevate the lighting to cinematic quality with dramatic shadows and rich color grading. Preserve all spatial proportions from the reference.' },
-    { name: 'Product Hero',     description: 'Premium product photography — soft diffused light',
-      prompt: 'Preserve the exact framing and proportions from the reference frame. Present the subject with premium product photography lighting — soft, diffused, elevated. Clean background, professional finish.' },
-    { name: 'Editorial',        description: 'High-fashion editorial with strong contrast',
-      prompt: 'Follow the reference frame composition and ratio exactly. Apply a high-fashion editorial tone with strong contrast and intentional color treatment. Maintain all camera angles and spatial relationships.' },
-    { name: 'Neutral Reference', description: 'Accurate neutral output — ideal as motion reference',
-      prompt: 'Faithfully reproduce the camera angle, proportions and spatial layout of the reference frame with neutral, accurate lighting. Minimal stylization — preserve as close to the reference geometry as possible.' }
+    {
+      name: 'Studio Match',
+      description: 'Clean commercial studio — preserves camera angle exactly',
+      prompt: 'Using the reference images as the complete visual guide — adopt their full color palette, background, lighting atmosphere, materials and overall tone exactly as shown. Apply this visual world to the subject. Use the viewport reference frame ONLY to determine the correct camera angle, focal length, framing, proportions and aspect ratio. Do not use the viewport frame for color, background or style — only for spatial composition and camera position.'
+    },
+    {
+      name: 'Cinematic Grade',
+      description: 'Cinematic quality — full reference image atmosphere',
+      prompt: 'Fully adopt the visual language of the reference images — their color grading, background environment, lighting mood, material quality and cinematic atmosphere. Recreate this complete visual world at the camera angle, framing and proportions shown in the viewport reference frame. The viewport frame defines ONLY the spatial composition and camera position — all visual style, background and tone must come from the reference images.'
+    },
+    {
+      name: 'Product Hero',
+      description: 'Premium product photography — reference image environment',
+      prompt: 'Take the complete visual environment from the reference images — background, lighting setup, color palette, material finish and overall atmosphere — and apply it faithfully. Use the viewport reference frame exclusively to determine the camera angle, scale, proportions and framing of the subject. The reference images define the entire visual world. The viewport frame defines only the camera position and spatial layout.'
+    },
+    {
+      name: 'Editorial',
+      description: 'High-fashion editorial — full reference image tone',
+      prompt: 'Adopt the complete editorial visual world shown in the reference images — their color treatment, background, lighting character, texture and atmosphere. Apply this entire visual environment to the composition. Use the viewport reference frame only to establish the correct camera angle, framing, proportions and aspect ratio. Do not derive any color, background or stylistic information from the viewport frame.'
+    },
+    {
+      name: 'Neutral Reference',
+      description: 'Faithful to reference image — accurate camera from viewport',
+      prompt: 'Faithfully reproduce the complete visual environment of the reference images — including their background, color palette, lighting and overall tone — with maximum accuracy. Use the viewport reference frame solely to determine the camera angle, focal length, subject proportions and spatial composition. The reference images are the complete style guide. The viewport frame is the camera guide only.'
+    }
   ],
   seedance: [
     { name: 'Motion Faithful',   description: 'Visual reference defines style, viewport guides motion',
@@ -4528,6 +4543,138 @@ function showTemplatePicker(type, targetTextareaId) {
   document.body.appendChild(overlay);
 }
 
+function showPromptEditor(sourceTextareaId, title) {
+  const existing = document.getElementById('prompt-editor-overlay');
+  if (existing) existing.remove();
+
+  const sourceTextarea = document.getElementById(sourceTextareaId);
+  if (!sourceTextarea) return;
+
+  const currentValue = sourceTextarea.value;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'prompt-editor-overlay';
+  overlay.innerHTML = `
+    <div class="prompt-editor-panel">
+      <div class="prompt-editor-header">
+        <div class="prompt-editor-title">${title || 'Edit Prompt'}</div>
+        <div class="prompt-editor-header-actions">
+          <button id="prompt-editor-template-btn" class="prompt-editor-tpl-btn">⚡ Templates</button>
+          <button id="prompt-editor-close" class="prompt-editor-close-btn">✕</button>
+        </div>
+      </div>
+      <div class="prompt-editor-body">
+        <textarea id="prompt-editor-textarea" placeholder="Enter your prompt here..."></textarea>
+        <div id="prompt-editor-charcount" class="prompt-editor-charcount">0 characters</div>
+      </div>
+      <div class="prompt-editor-footer">
+        <button id="prompt-editor-cancel" class="prompt-editor-cancel-btn">Cancel</button>
+        <button id="prompt-editor-apply" class="prompt-editor-apply-btn">Apply ✓</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const editorTextarea = document.getElementById('prompt-editor-textarea');
+  editorTextarea.value = currentValue;
+  editorTextarea.focus();
+  editorTextarea.selectionStart = editorTextarea.selectionEnd = editorTextarea.value.length;
+
+  const updateCharCount = () => {
+    const c = document.getElementById('prompt-editor-charcount');
+    if (c) c.textContent = editorTextarea.value.length + ' characters';
+  };
+  updateCharCount();
+
+  editorTextarea.addEventListener('input', updateCharCount);
+
+  const applyAndClose = () => {
+    const newValue = editorTextarea.value;
+    sourceTextarea.value = newValue;
+    // Mirror to node-editor counterpart (and back, if user opened from node side via mapped sourceId)
+    const baseId = sourceTextareaId.replace(/-node$/, '');
+    const nodeId = baseId + '-node';
+    [baseId, nodeId].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el !== sourceTextarea) el.value = newValue;
+    });
+    if (sourceTextareaId.includes('nb')) pipelineState.nanobananaPrompt = newValue;
+    if (sourceTextareaId.includes('sd')) pipelineState.seedancePrompt = newValue;
+    if (sourceTextareaId.includes('up')) pipelineState.upscalePrompt = newValue;
+
+    sourceTextarea.style.borderColor = 'var(--accent)';
+    setTimeout(() => { sourceTextarea.style.borderColor = ''; }, 1000);
+
+    overlay.remove();
+    document.removeEventListener('keydown', escHandler);
+    markSceneModified();
+  };
+
+  const cancelAndClose = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', escHandler);
+  };
+
+  document.getElementById('prompt-editor-apply').addEventListener('click', applyAndClose);
+  document.getElementById('prompt-editor-cancel').addEventListener('click', cancelAndClose);
+  document.getElementById('prompt-editor-close').addEventListener('click', cancelAndClose);
+
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelAndClose();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      applyAndClose();
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) cancelAndClose();
+  });
+
+  document.getElementById('prompt-editor-template-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const stage = sourceTextareaId.includes('nb') ? 'nanobanana'
+      : sourceTextareaId.includes('sd') ? 'seedance'
+      : 'upscale';
+    showTemplatePicker(stage, sourceTextareaId);
+    // The picker writes to the source textarea synchronously on Use; sync editor afterwards.
+    setTimeout(() => {
+      if (sourceTextarea.value !== editorTextarea.value) {
+        editorTextarea.value = sourceTextarea.value;
+        updateCharCount();
+      }
+    }, 150);
+  });
+}
+
+function wirePromptEditorTriggers() {
+  const promptMap = {
+    'nb-prompt':      'Nanobanana Prompt',
+    'sd-prompt':      'Seedance Prompt',
+    'up-prompt':      'Upscale Prompt',
+    'nb-prompt-node': 'Nanobanana Prompt',
+    'sd-prompt-node': 'Seedance Prompt',
+    'up-prompt-node': 'Upscale Prompt'
+  };
+
+  Object.entries(promptMap).forEach(([id, title]) => {
+    const textarea = document.getElementById(id);
+    if (!textarea || textarea.dataset.editorWired === '1') return;
+    textarea.dataset.editorWired = '1';
+    textarea.style.cursor = 'pointer';
+    textarea.title = 'Click to edit full screen';
+    textarea.readOnly = true;
+    textarea.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sourceId = id.replace(/-node$/, '');
+      showPromptEditor(sourceId, title);
+    });
+  });
+}
+
 function wireTemplateButton(card, stage, textareaId) {
   const btns = card.querySelectorAll(`.template-picker-btn[data-stage="${stage}"]`);
   btns.forEach(btn => {
@@ -5018,6 +5165,7 @@ function rebuildSimplePanel() {
 
   updateStepPositions();
   drawSimpleConnections();
+  if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
 }
 
 rebuildSimplePanel();
@@ -5674,6 +5822,7 @@ function buildNodeEditor() {
   initNodePorts();
   initDefaultConnections();
   syncNodeEditor();
+  if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
 }
 
 buildNodeEditor();
