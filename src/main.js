@@ -352,13 +352,28 @@ ipcMain.handle('ai-video-cancel', async (_event, { jobId }) => {
   try { await videoProvider.cancel(jobId); return { success: true }; }
   catch (err) { return { success: false, error: err.message }; }
 });
-ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp }) => {
+ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp, saveFolder }) => {
   if (!mp4Path || !fs.existsSync(mp4Path)) {
     return { success: false, error: 'MP4 not found.' };
   }
   const ts = Math.max(0, parseFloat(timestamp) || 0);
   const os = require('os');
-  const outPath = path.join(os.tmpdir(), `refluent_frame_${Date.now()}.jpg`);
+
+  // If a save folder is set, auto-increment Refluent_Frame_001.jpg, _002.jpg, …
+  // Otherwise fall back to the OS temp dir.
+  let outPath;
+  if (saveFolder && fs.existsSync(saveFolder)) {
+    let i = 1;
+    while (true) {
+      const name = `Refluent_Frame_${String(i).padStart(3, '0')}.jpg`;
+      const full = path.join(saveFolder, name);
+      if (!fs.existsSync(full)) { outPath = full; break; }
+      i++;
+    }
+  } else {
+    outPath = path.join(os.tmpdir(), `refluent_frame_${Date.now()}.jpg`);
+  }
+
   return new Promise((resolve) => {
     fluentFfmpeg(mp4Path)
       .seekInput(ts)

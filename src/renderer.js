@@ -1332,6 +1332,8 @@ document.getElementById('clear-scene-btn').addEventListener('click', async () =>
   const targetMarker = document.getElementById('target-marker');
   if (targetMarker) targetMarker.style.display = 'none';
   updateLayersPanel();
+  // Wipe pipeline state + rebuild both panels from clean templates
+  if (typeof resetPipeline === 'function') resetPipeline();
   markSceneModified();
 });
 
@@ -3726,6 +3728,8 @@ async function newScene() {
   hasUnsavedChanges = false;
   window.electronAPI.setUnsavedChanges(false);
   updateWindowTitle();
+  // Wipe pipeline state + rebuild both panels from clean templates
+  if (typeof resetPipeline === 'function') resetPipeline();
 }
 
 async function openSceneFromDialog() {
@@ -4874,6 +4878,7 @@ function restorePipelineUI() {
         showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
       });
     }
+    updateNanobananaFramePreview();
   }
 
   // Nanobanana prompt textareas (Simple + Node)
@@ -5119,6 +5124,35 @@ async function runUpscaleGenerate(scope) {
   }
 }
 
+function updateNanobananaFramePreview() {
+  if (!pipelineState.referenceFrameImage) return;
+  const imgUrl = 'file:///' + pipelineState.referenceFrameImage.replace(/\\/g, '/');
+
+  const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
+  if (!nbBody) return;
+
+  let preview = nbBody.querySelector('#nb-frame-preview');
+  if (!preview) {
+    preview = document.createElement('div');
+    preview.id = 'nb-frame-preview';
+    preview.style.cssText = `
+      margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);`;
+    // Insert at top of the inner step-content (before the existing form)
+    const inner = nbBody.querySelector('.step-content') || nbBody.firstElementChild || nbBody;
+    inner.insertBefore(preview, inner.firstChild);
+  }
+
+  preview.innerHTML = `
+    <div style="font-size:9px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">
+      Input Frame
+    </div>
+    <img src="${imgUrl}" style="width:100%;height:60px;object-fit:cover;border-radius:4px;cursor:zoom-in;display:block;" title="Click to view full size">`;
+  const img = preview.querySelector('img');
+  if (img) img.addEventListener('click', () => {
+    showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
+  });
+}
+
 function wireStepCardInteractions(card, step) {
   if (step.id === 'frame') {
     const confirmBtn = card.querySelector('#confirm-frame');
@@ -5132,10 +5166,28 @@ function wireStepCardInteractions(card, step) {
         try {
           const result = await window.electronAPI.extractFrame({
             mp4Path: pipelineState.mp4Path,
-            timestamp: parseFloat(pipelineState.referenceFrame) || 0
+            timestamp: parseFloat(pipelineState.referenceFrame) || 0,
+            saveFolder: localStorage.getItem('refluent_mp4_folder') || null
           });
-          if (result && result.success) {
+          if (result && result.success && result.framePath) {
             pipelineState.referenceFrameImage = result.framePath;
+            const imgUrl = 'file:///' + result.framePath.replace(/\\/g, '/');
+            const frameBody = card.querySelector('.step-body');
+            if (frameBody) {
+              frameBody.innerHTML = `
+                <div style="position:relative;padding:6px;">
+                  <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
+                  <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">
+                    Frame at ${pipelineState.referenceFrame}s
+                  </div>
+                </div>`;
+              const img = frameBody.querySelector('img');
+              if (img) img.addEventListener('click', () => {
+                showNanobananaFullscreen(imgUrl, result.framePath);
+              });
+            }
+            updateNanobananaFramePreview();
+            markSceneModified();
           } else {
             showToast((result && result.error) || 'Could not extract frame.');
           }
