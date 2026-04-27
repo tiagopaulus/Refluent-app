@@ -239,6 +239,9 @@ const sunResetEl = document.createElement('div');
 sunResetEl.id = 'sun-reset';
 sunResetEl.setAttribute('data-i18n', 'resetLight');
 sunResetEl.style.cssText = 'position:absolute;left:16px;top:168px;font-size:10px;color:#555;text-align:center;width:64px;cursor:pointer;z-index:100;';
+sunResetEl.style.color = '#ffffff';
+sunResetEl.style.fontWeight = '600';
+sunResetEl.style.fontSize = '11px';
 container.appendChild(sunResetEl);
 
 const origin = new THREE.Vector3(0, 0, 0);
@@ -368,11 +371,19 @@ try {
     _closeBtn.addEventListener('click', () => {
       const hint = document.getElementById('nav-hint');
       if (hint) hint.style.display = 'none';
-      localStorage.setItem('nav_hint_dismissed', 'true');
+      localStorage.setItem('nav_hint_dismissed_at', Date.now().toString());
     });
   }
-  if (localStorage.getItem('nav_hint_dismissed') === 'true' && _navHintEl) {
-    _navHintEl.style.display = 'none';
+  // Hide only if dismissed recently (within the last 30 days); otherwise show.
+  const _dismissedAt = localStorage.getItem('nav_hint_dismissed_at');
+  const _oneDayMs = 24 * 60 * 60 * 1000;
+  const _hideHint = _dismissedAt && (Date.now() - parseInt(_dismissedAt, 10)) < _oneDayMs * 30;
+  if (_navHintEl) {
+    _navHintEl.style.display = _hideHint ? 'none' : 'flex';
+  }
+  // Clear the legacy boolean key so old installs migrate to the new scheme
+  if (localStorage.getItem('nav_hint_dismissed') !== null) {
+    localStorage.removeItem('nav_hint_dismissed');
   }
   debug('Navigation hint listener added');
 } catch (e) {
@@ -980,6 +991,10 @@ layersPanel.innerHTML = `
   </div>`;
 document.getElementById('viewport').appendChild(layersPanel);
 layersPanel.style.top = '206px';
+{
+  const _currentTop = parseInt(layersPanel.style.top) || 220;
+  layersPanel.style.top = Math.round(_currentTop * 1.2) + 'px';
+}
 
 function updateLayersPanel() {
   const list = document.getElementById('layers-list');
@@ -3794,6 +3809,149 @@ if (btnNode)   btnNode.addEventListener('click',   () => { setLayout('node');   
 
 const savedLayout = localStorage.getItem('layout_mode') || 'simple';
 setLayout(savedLayout);
+
+// ---- Resizable panels (Mission 3) ----
+(function wireSimplePanelResize() {
+  if (!simplePanel) return;
+  const oldHandle = document.getElementById('simple-resize-handle');
+  if (oldHandle) oldHandle.remove();
+
+  const simpleResizeHandle = document.createElement('div');
+  simpleResizeHandle.id = 'simple-resize-handle';
+  simpleResizeHandle.style.cssText = `
+    position: absolute;
+    top: -5px;
+    left: 0;
+    width: 100%;
+    height: 10px;
+    cursor: ns-resize;
+    z-index: 500;
+    background: transparent;`;
+  simplePanel.style.position = 'relative';
+  simplePanel.appendChild(simpleResizeHandle);
+
+  let simpleResizing = false;
+  let simpleResizeStartY = 0;
+  let simpleResizeStartHeight = 0;
+  const SIMPLE_MIN_HEIGHT = 80;
+  const SIMPLE_MAX_HEIGHT = Math.round(window.innerHeight * 0.5);
+
+  simpleResizeHandle.addEventListener('mouseenter', () => {
+    simpleResizeHandle.style.background = 'rgba(74,159,165,0.3)';
+    document.body.style.cursor = 'ns-resize';
+  });
+  simpleResizeHandle.addEventListener('mouseleave', () => {
+    if (!simpleResizing) {
+      simpleResizeHandle.style.background = 'transparent';
+      document.body.style.cursor = 'default';
+    }
+  });
+
+  simpleResizeHandle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    simpleResizing = true;
+    simpleResizeStartY = e.clientY;
+    simpleResizeStartHeight = simplePanel.offsetHeight;
+    document.body.style.cursor = 'ns-resize';
+    simpleResizeHandle.style.background = 'rgba(74,159,165,0.5)';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!simpleResizing) return;
+    const delta = simpleResizeStartY - e.clientY;
+    const newHeight = Math.max(SIMPLE_MIN_HEIGHT,
+      Math.min(SIMPLE_MAX_HEIGHT, simpleResizeStartHeight + delta));
+    simplePanel.style.height = newHeight + 'px';
+    if (typeof updateStepPositions === 'function') updateStepPositions();
+    if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!simpleResizing) return;
+    simpleResizing = false;
+    document.body.style.cursor = 'default';
+    simpleResizeHandle.style.background = 'transparent';
+    localStorage.setItem('simple_panel_height', simplePanel.offsetHeight);
+  });
+
+  const saved = localStorage.getItem('simple_panel_height');
+  if (saved) simplePanel.style.height = parseInt(saved, 10) + 'px';
+})();
+
+(function wireNodePanelResize() {
+  if (!nodePanel) return;
+  const oldNodeHandle = document.getElementById('node-resize-handle');
+  if (oldNodeHandle) oldNodeHandle.remove();
+
+  const nodeResizeHandle = document.createElement('div');
+  nodeResizeHandle.id = 'node-resize-handle';
+  nodeResizeHandle.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: -5px;
+    width: 10px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 500;
+    background: transparent;`;
+  nodePanel.style.position = 'relative';
+  nodePanel.appendChild(nodeResizeHandle);
+
+  let nodeResizing = false;
+  let nodeResizeStartX = 0;
+  let nodeResizeStartWidth = 0;
+  const NODE_MIN_WIDTH = Math.round(window.innerWidth * 0.15);
+  const NODE_MAX_WIDTH = Math.round(window.innerWidth * 0.6);
+
+  nodeResizeHandle.addEventListener('mouseenter', () => {
+    nodeResizeHandle.style.background = 'rgba(74,159,165,0.3)';
+    document.body.style.cursor = 'ew-resize';
+  });
+  nodeResizeHandle.addEventListener('mouseleave', () => {
+    if (!nodeResizing) {
+      nodeResizeHandle.style.background = 'transparent';
+      document.body.style.cursor = 'default';
+    }
+  });
+
+  nodeResizeHandle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    nodeResizing = true;
+    nodeResizeStartX = e.clientX;
+    nodeResizeStartWidth = nodePanel.offsetWidth;
+    document.body.style.cursor = 'ew-resize';
+    nodeResizeHandle.style.background = 'rgba(74,159,165,0.5)';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!nodeResizing) return;
+    const delta = nodeResizeStartX - e.clientX;
+    const newWidth = Math.max(NODE_MIN_WIDTH,
+      Math.min(NODE_MAX_WIDTH, nodeResizeStartWidth + delta));
+    nodePanel.style.width = newWidth + 'px';
+    const viewportEl = document.getElementById('viewport');
+    if (viewportEl) viewportEl.style.width = (window.innerWidth - newWidth) + 'px';
+    window.dispatchEvent(new Event('resize'));
+    localStorage.setItem('node_panel_width', newWidth);
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!nodeResizing) return;
+    nodeResizing = false;
+    document.body.style.cursor = 'default';
+    nodeResizeHandle.style.background = 'transparent';
+  });
+
+  const saved = localStorage.getItem('node_panel_width');
+  if (saved) {
+    const nw = parseInt(saved, 10);
+    nodePanel.style.width = nw + 'px';
+    const viewportEl = document.getElementById('viewport');
+    if (viewportEl) viewportEl.style.width = (window.innerWidth - nw) + 'px';
+  }
+})();
 
 // ---- Simple Mode Pipeline ----
 

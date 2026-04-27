@@ -9,10 +9,10 @@
 <body>
   <div id="layout-toggle" style="position:fixed;top:8px;right:16px;z-index:200;display:flex;gap:4px;">
     <button id="btn-simple" title="Simple Mode" style="background:#1e1e1e;border:1px solid #fff;border-radius:4px;width:32px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="9" rx="1" stroke="#fff" stroke-width="1.5"/><rect x="1" y="12" width="14" height="3" rx="1" fill="#fff" opacity="0.4"/></svg>
+      <i class="ph ph-rows" style="color:#fff;font-size:16px;"></i>
     </button>
     <button id="btn-node" title="Node Editor" style="background:#1e1e1e;border:1px solid #444;border-radius:4px;width:32px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="5" height="4" rx="1" stroke="#aaa" stroke-width="1.2"/><rect x="1" y="6" width="5" height="4" rx="1" stroke="#aaa" stroke-width="1.2"/><rect x="1" y="11" width="5" height="4" rx="1" stroke="#aaa" stroke-width="1.2"/><rect x="10" y="3" width="5" height="4" rx="1" stroke="#aaa" stroke-width="1.2"/><rect x="10" y="9" width="5" height="4" rx="1" stroke="#aaa" stroke-width="1.2"/><line x1="6" y1="3" x2="10" y2="5" stroke="#555" stroke-width="1"/><line x1="6" y1="8" x2="10" y2="6" stroke="#555" stroke-width="1"/><line x1="6" y1="8" x2="10" y2="11" stroke="#555" stroke-width="1"/><line x1="6" y1="13" x2="10" y2="11" stroke="#555" stroke-width="1"/></svg>
+      <i class="ph ph-graph" style="color:#aaa;font-size:16px;"></i>
     </button>
   </div>
 
@@ -21,17 +21,17 @@
       <p style="color: white; padding: 20px; font-family: Arial; font-size: 18px;">Loading 3D Viewport... If this message persists, there's an issue with the 3D renderer.</p>
       <div class="toolbar">
         <div class="toolbar-left">
-          <button id="add-box-btn" data-i18n="addBox">Add Box</button>
-          <button id="add-sphere-btn" data-i18n="addSphere">Add Sphere</button>
-          <button id="import-model-btn" data-i18n="importModel">Import Model</button>
-          <button id="clear-scene-btn" data-i18n="clearScene">Clear Scene</button>
-          <button id="set-target-btn" data-i18n="setTarget">Set Target</button>
-          <button id="clear-target-btn" class="hidden" data-i18n="clearTarget">Clear Target</button>
+          <button id="add-box-btn" title="Add a box to the scene"><i class="ph ph-cube"></i><span data-i18n="addBox">Add Box</span></button>
+          <button id="add-sphere-btn" title="Add a sphere to the scene"><i class="ph ph-circle"></i><span data-i18n="addSphere">Add Sphere</span></button>
+          <button id="import-model-btn" title="Import a 3D model (OBJ, GLB, FBX, DAE)"><i class="ph ph-upload-simple"></i><span data-i18n="importModel">Import</span></button>
+          <button id="clear-scene-btn" title="Remove all objects from the scene"><i class="ph ph-trash"></i><span data-i18n="clearScene">Clear</span></button>
+          <button id="set-target-btn" title="Set the camera focus point"><i class="ph ph-crosshair"></i><span data-i18n="setTarget">Set Target</span></button>
+          <button id="clear-target-btn" class="hidden"><i class="ph ph-x-circle"></i><span data-i18n="clearTarget">Clear Target</span></button>
         </div>
         <div class="toolbar-right">
           <div id="recording-time" class="hidden">00:00</div>
-          <button id="record-btn" class="rec-btn" data-i18n="rec">● REC</button>
-          <button id="stop-btn" class="hidden" data-i18n="stop">■ Stop</button>
+          <button id="record-btn" class="rec-btn"><i class="ph ph-record"></i><span data-i18n="rec">REC</span></button>
+          <button id="stop-btn" class="hidden"><i class="ph ph-stop"></i><span data-i18n="stop">Stop</span></button>
         </div>
       </div>
     </div>
@@ -99,10 +99,10 @@
   </div>
 
   <div class="top-toolbar">
-    <div class="top-toolbar-section" style="border-right:1px solid #444;">
-      <div class="toolbar-group" style="margin-right:12px;">
-        <label data-i18n="lens" style="font-size:11px;color:#aaa;margin-right:4px;">Lens</label>
-        <select id="lens-select" style="background:#2a2a2a;color:#fff;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px;">
+    <div id="lens-ratio-group">
+      <div class="lens-ratio-row">
+        <label data-i18n="lens" class="lens-ratio-label">Lens</label>
+        <select id="lens-select">
           <option value="0">Leica Summilux 24mm</option>
           <option value="1">Sigma Art 24mm</option>
           <option value="2">Leica Summicron 28mm</option>
@@ -116,44 +116,37 @@
           <option value="10">Leica APO 90mm</option>
           <option value="11">Canon EF 135mm f/2L</option>
         </select>
-        <div style="display:flex;align-items:center;gap:4px;margin-left:6px;">
-          <input type="number" id="lens-mm-input" min="8" max="300" value="35"
-            style="width:48px;background:#1a1a1a;border:1px solid #444;
-            color:#fff;font-size:11px;padding:2px 4px;border-radius:4px;
-            text-align:center;"
-            data-i18n-title="customMm"
-            title="Custom focal length in mm">
-          <span style="font-size:10px;color:#555;">mm</span>
-        </div>
-        <div class="toolbar-group" style="margin-left:12px;">
-          <label data-i18n="ratio" style="font-size:11px;color:#aaa;margin-right:4px;">Ratio</label>
-          <select id="ratio-select" data-i18n-title="ratioTooltip" title="Choose output aspect ratio"
-            style="background:#1a1a1a;border:1px solid #444;border-radius:4px;color:#fff;font-size:11px;padding:2px 6px;">
-            <option value="16:9">16:9 — Widescreen</option>
-            <option value="1:1">1:1 — Square</option>
-            <option value="4:5">4:5 — Portrait</option>
-            <option value="3:4">3:4 — Classic Portrait</option>
-            <option value="9:16">9:16 — Vertical / Reels</option>
-          </select>
-        </div>
+        <input type="number" id="lens-mm-input" min="8" max="300" value="35"
+          data-i18n-title="customMm" title="Custom focal length in mm">
+        <span class="mm-suffix">mm</span>
+      </div>
+      <div class="lens-ratio-row">
+        <label data-i18n="ratio" class="lens-ratio-label">Ratio</label>
+        <select id="ratio-select" data-i18n-title="ratioTooltip" title="Choose output aspect ratio">
+          <option value="16:9">16:9 — Widescreen</option>
+          <option value="1:1">1:1 — Square</option>
+          <option value="4:5">4:5 — Portrait</option>
+          <option value="3:4">3:4 — Classic Portrait</option>
+          <option value="9:16">9:16 — Vertical / Reels</option>
+        </select>
       </div>
     </div>
     <div class="top-toolbar-section">
       <div class="radio-group" id="cam-move-radios">
         <input type="radio" id="cam-push-in" name="camType" value="pushIn" checked>
-        <label for="cam-push-in" data-i18n="pushIn">Push In</label>
-        
+        <label for="cam-push-in" title="Camera moves closer"><i class="ph ph-arrow-fat-lines-up"></i><span class="btn-label" data-i18n="pushIn">Push</span></label>
+
         <input type="radio" id="cam-pull-out" name="camType" value="pullOut">
-        <label for="cam-pull-out" data-i18n="pullOut">Pull Out</label>
-        
+        <label for="cam-pull-out" title="Camera moves away"><i class="ph ph-arrow-fat-lines-down"></i><span class="btn-label" data-i18n="pullOut">Pull</span></label>
+
         <input type="radio" id="cam-dolly" name="camType" value="dolly">
-        <label for="cam-dolly" data-i18n="dolly">Dolly</label>
-        
+        <label for="cam-dolly" title="Camera slides left/right"><i class="ph ph-arrows-left-right"></i><span class="btn-label" data-i18n="dolly">Dolly</span></label>
+
         <input type="radio" id="cam-pan" name="camType" value="pan">
-        <label for="cam-pan" data-i18n="pan">Pan</label>
-        
+        <label for="cam-pan" title="Camera rotates left/right"><i class="ph ph-arrows-clockwise"></i><span class="btn-label" data-i18n="pan">Pan</span></label>
+
         <input type="radio" id="cam-tilt" name="camType" value="tilt">
-        <label for="cam-tilt" data-i18n="tilt">Tilt</label>
+        <label for="cam-tilt" title="Camera rotates up/down"><i class="ph ph-arrows-vertical"></i><span class="btn-label" data-i18n="tilt">Tilt</span></label>
       </div>
     </div>
     

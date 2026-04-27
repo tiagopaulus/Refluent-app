@@ -2,26 +2,46 @@
    Refluent visual language - design tokens
    ============================================================ */
 :root {
-  --bg-void: #080a0c;
-  --bg-panel: #111316;
-  --bg-surface: #161a1e;
-  --bg-raised: #1c2026;
-  --border: rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.12);
-  --text-primary: #e8e8e8;
-  --text-secondary: #666c74;
-  --text-disabled: #2e3340;
+  /* Backgrounds — warmer, less pure black */
+  --bg-void: #0d1117;
+  --bg-panel: #161c24;
+  --bg-surface: #1c2330;
+  --bg-raised: #222c3a;
+  --bg-hover: #283244;
+
+  /* Borders */
+  --border: rgba(255,255,255,0.08);
+  --border-hover: rgba(255,255,255,0.16);
+
+  /* Text */
+  --text-primary: #eef0f3;
+  --text-secondary: #7a8694;
+  --text-disabled: #3a4452;
+
+  /* Accent — keep teal */
   --accent: #4a9fa5;
   --accent-bright: #6dc4ca;
   --accent-glow: rgba(74,159,165,0.15);
+
+  /* Danger */
   --danger: #c44a4a;
   --danger-hover: rgba(196,74,74,0.15);
-  --radius-card: 6px;
-  --radius-btn: 4px;
+
+  /* Typography */
   --font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --font-size-ui: 11px;
-  --font-size-label: 10px;
-  --font-size-header: 13px;
+  --font-size-ui: 13px;
+  --font-size-label: 11px;
+  --font-size-header: 17px;
+  --font-size-large: 20px;
+
+  /* Spacing */
+  --radius-card: 8px;
+  --radius-btn: 5px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
 }
 
 * { font-family: var(--font); box-sizing: border-box; }
@@ -1855,4 +1875,396 @@ input[type=range] {
 /* --- Camera movement description spans (rendered inline by renderer.js) --- */
 label[for^="cam-"] span {
   color: var(--text-disabled) !important;
+}
+
+/* ============================================================
+   Mission 3 — UI overhaul: Phosphor icons, larger typography,
+   warmer tones, resizable panels
+   ============================================================ */
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+body, html {
+  font-size: var(--font-size-ui);
+  color: var(--text-primary);
+}
+label, .label, .sublabel {
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+}
+h1, h2, h3, .header {
+  font-size: var(--font-size-header);
+  color: var(--text-primary);
+  font-weight: 400;
+}
+
+/* Camera movement — radio-group labels get icon + text look */
+.radio-group label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  color: var(--text-secondary);
+  font-size: var(--font-size-label);
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  min-width: 56px;
+  line-height: 1.2;
+}
+.radio-group label:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: var(--bg-surface);
+}
+.radio-group input[type="radio"]:checked + label {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.radio-group label .ph {
+  font-size: 18px;
+  line-height: 1;
+}
+.radio-group label .btn-label {
+  font-size: var(--font-size-label);
+  letter-spacing: 0.3px;
+}
+.radio-group label span {
+  font-size: var(--font-size-label);
+}
+
+/* Bottom toolbar (Add Box etc.) — icon + label pill look */
+.toolbar-left button, .toolbar-right button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-label);
+  padding: 7px 14px;
+  border-radius: var(--radius-btn);
+}
+.toolbar-left button .ph,
+.toolbar-right button .ph {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Layout toggle — swap SVGs for Phosphor icons */
+#layout-toggle button .ph {
+  font-size: 16px;
+  line-height: 1;
+  color: #aaa;
+}
+#layout-toggle button svg {
+  display: none; /* legacy SVGs hidden in favour of Phosphor */
+}
+
+/* Layers panel — wider, bigger type */
+#layers-panel {
+  width: 220px !important;
+  left: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  font-size: var(--font-size-ui);
+}
+#layers-header {
+  font-size: var(--font-size-label);
+  letter-spacing: 1.5px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.layer-item {
+  padding: 9px 14px;
+  font-size: var(--font-size-ui);
+}
+.layer-item-name {
+  font-size: var(--font-size-ui);
+  max-width: 160px;
+}
+
+/* Object popup — 12% bigger */
+.object-popup {
+  width: 246px;
+  padding: 18px;
+  font-size: var(--font-size-ui);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.object-popup-header {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.object-popup-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.axis-label {
+  font-size: var(--font-size-label);
+  width: 32px;
+  color: var(--text-secondary);
+}
+.popup-axis-row {
+  margin-bottom: 5px;
+  gap: 8px;
+}
+.popup-reset-btn {
+  font-size: var(--font-size-label);
+  padding: 6px;
+  margin-top: 6px;
+}
+
+/* Resize handles */
+#simple-resize-handle {
+  pointer-events: all;
+}
+#simple-resize-handle:hover {
+  background: var(--accent) !important;
+  opacity: 0.4;
+}
+#node-resize-handle {
+  pointer-events: all;
+}
+#node-resize-handle:hover {
+  background: var(--accent) !important;
+  opacity: 0.4;
+}
+
+/* Modal overlays */
+#prefs-modal, #lang-welcome-overlay, #walkthrough-overlay, #recent-overlay {
+  font-size: var(--font-size-ui);
+}
+.prefs-label  { font-size: var(--font-size-ui); }
+.prefs-sublabel { font-size: var(--font-size-label); }
+.prefs-category { font-size: var(--font-size-ui); padding: 10px 16px; }
+.recent-name { font-size: var(--font-size-ui); }
+.recent-date { font-size: var(--font-size-label); }
+
+/* Simple/Node cards headers */
+.node-card { font-size: var(--font-size-ui); border-radius: var(--radius-card); }
+.node-title-bar {
+  font-size: var(--font-size-ui);
+  padding: 10px 12px;
+  background: var(--bg-surface);
+}
+.step-header {
+  font-size: var(--font-size-ui);
+  padding: 8px 10px;
+  background: var(--bg-surface);
+}
+.step-skip-btn {
+  font-size: var(--font-size-label);
+  padding: 3px 8px;
+}
+
+/* Lens HUD + top selects */
+#lens-hud {
+  font-size: var(--font-size-label);
+  color: rgba(238,240,243,0.3);
+  letter-spacing: 0.5px;
+}
+#lens-select, #ratio-select, #lens-mm-input {
+  font-size: var(--font-size-ui) !important;
+  padding: 4px 10px !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-btn) !important;
+  color: var(--text-primary) !important;
+}
+
+/* REC/Stop buttons — keep red REC look, allow icon alignment */
+#record-btn, #stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#record-btn .ph, #stop-btn .ph {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ============================================================
+   Mission 3 — Fix: toolbar spacing, bold fonts, separators
+   ============================================================ */
+
+/* Toolbar — fixed 80px height, single row */
+#toolbar, .toolbar, .top-toolbar {
+  height: 80px;
+  min-height: 80px;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+}
+
+/* Lens / Ratio stacked column on the left */
+#lens-ratio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-right: 24px;
+  justify-content: center;
+}
+#lens-ratio-group .lens-ratio-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+#lens-ratio-group .lens-ratio-label {
+  font-size: var(--font-size-label);
+  color: var(--text-secondary);
+  width: 36px;
+  flex-shrink: 0;
+  margin: 0;
+}
+#lens-ratio-group .mm-suffix {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* Vertical separator after the lens/ratio column */
+#lens-ratio-group::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 40px;
+  background: var(--border);
+  margin: 0;
+  position: absolute;
+}
+.top-toolbar #lens-ratio-group {
+  position: relative;
+  padding-right: 12px;
+}
+.top-toolbar #lens-ratio-group::after {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* All other toolbar children stay inline and don't shrink */
+.toolbar-group, .top-toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.top-toolbar label, .toolbar label {
+  font-size: var(--font-size-label);
+  margin-right: 6px;
+}
+
+/* Selects/inputs */
+#lens-select,
+#ratio-select {
+  height: 28px;
+  padding: 0 8px !important;
+  font-size: var(--font-size-ui) !important;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  color: var(--text-primary);
+}
+#lens-mm-input {
+  height: 28px;
+  width: 52px;
+  padding: 0 6px !important;
+  font-size: var(--font-size-ui) !important;
+  flex-shrink: 0;
+  text-align: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  color: var(--text-primary);
+}
+
+/* Preset buttons stay inline */
+.preset-btn {
+  padding: 8px 10px;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+
+/* Separator between toolbar groups */
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 12px;
+  flex-shrink: 0;
+}
+
+/* Bold preset button labels; bolder on active */
+.preset-btn .btn-label,
+.radio-group label .btn-label {
+  font-weight: 600;
+  font-size: 11px;
+}
+.preset-btn.active .btn-label,
+.radio-group input[type="radio"]:checked + label .btn-label {
+  font-weight: 700;
+}
+
+.preset-btn .btn-desc {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.7);
+}
+
+.preset-btn.active,
+.radio-group input[type="radio"]:checked + label {
+  font-weight: 600;
+}
+
+/* Bold across interactive labels */
+button, .btn-label, .layer-item-name,
+.object-popup-name, .node-header,
+.step-header .step-name {
+  font-weight: 600;
+}
+
+/* Regular weight for secondary descriptions */
+.btn-desc, .prefs-sublabel,
+.layer-item .secondary,
+.text-secondary {
+  font-weight: 400;
+}
+
+/* Bold text on colored accents (active states etc) */
+.node-card.node-active .node-title-bar,
+.step-card.active .step-header,
+.layer-item.selected .layer-item-name,
+.anim-btn.active,
+.prefs-category.active,
+#record-btn.recording span,
+.upscale-res-btn.active,
+.template-picker-btn {
+  font-weight: 600;
+}
+
+/* Tour tooltip title */
+#tour-tooltip .tour-tt-title {
+  font-weight: 600;
+}
+
+/* Welcome overlay product name */
+#lang-welcome-overlay div[style*="font-size:28px"] {
+  font-weight: 600;
+  letter-spacing: 6px;
 }
