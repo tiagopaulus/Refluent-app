@@ -817,6 +817,10 @@ objectPopup.innerHTML = `
     &#8634; Reset Position
   </button>
   <div id="popup-resize-label" style="font-size:11px;color:#777;margin:8px 0 6px 0;">Resize your object</div>
+  <div id="uniform-scale-row" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+    <input type="checkbox" id="uniform-scale-check" style="accent-color:var(--accent);cursor:pointer;width:12px;height:12px;">
+    <label for="uniform-scale-check" style="font-size:10px;color:var(--text-secondary);cursor:pointer;user-select:none;">Uniform Scale</label>
+  </div>
   <div class="popup-axis-row">
     <span class="axis-label">X</span>
     <input type="range" data-axis="x" data-type="scale" min="-3" max="3" step="0.001" value="0">
@@ -918,16 +922,37 @@ objectPopup.querySelectorAll('[data-type="position"]').forEach(slider => {
   });
 });
 
+let uniformScale = false;
+const _uniformCheck = document.getElementById('uniform-scale-check');
+if (_uniformCheck) {
+  _uniformCheck.addEventListener('change', () => { uniformScale = _uniformCheck.checked; });
+}
+
 objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
   slider.addEventListener('mousedown', () => {
     if (!selectedObject) return;
-    sliderBaseValues['scale_' + slider.dataset.axis] = selectedObject.scale[slider.dataset.axis];
+    // Capture the live scale on every axis so uniform mode can compute equal deltas
+    sliderBaseValues['scale_x'] = selectedObject.scale.x;
+    sliderBaseValues['scale_y'] = selectedObject.scale.y;
+    sliderBaseValues['scale_z'] = selectedObject.scale.z;
     slider.value = 0;
   });
   slider.addEventListener('input', () => {
     if (!selectedObject) return;
-    const base = sliderBaseValues['scale_' + slider.dataset.axis] || 1;
-    selectedObject.scale[slider.dataset.axis] = Math.max(0.01, base + parseFloat(slider.value) * 0.15);
+    const axis = slider.dataset.axis;
+    const delta = parseFloat(slider.value) * 0.15;
+    if (uniformScale) {
+      selectedObject.scale.x = Math.max(0.01, (sliderBaseValues['scale_x'] || 1) + delta);
+      selectedObject.scale.y = Math.max(0.01, (sliderBaseValues['scale_y'] || 1) + delta);
+      selectedObject.scale.z = Math.max(0.01, (sliderBaseValues['scale_z'] || 1) + delta);
+      // Mirror visual position to the other two sliders so the user sees them sweep together
+      objectPopup.querySelectorAll('[data-type="scale"]').forEach(other => {
+        if (other !== slider) other.value = slider.value;
+      });
+    } else {
+      const base = sliderBaseValues['scale_' + axis] || 1;
+      selectedObject.scale[axis] = Math.max(0.01, base + delta);
+    }
     updateTransformUI();
     markSceneModified();
   });
@@ -1038,6 +1063,10 @@ function showObjectPopup(obj) {
   if (nameEl) nameEl.textContent = obj.userData.name || obj.userData.modelName || 'Object';
   // Delta-mode: sliders open centered; mousedown captures the live base value
   popupSliders.forEach(s => { s.value = 0; });
+  // Reset Uniform Scale every time a new object is selected
+  uniformScale = false;
+  const _uc = document.getElementById('uniform-scale-check');
+  if (_uc) _uc.checked = false;
   // Sync animation buttons to the selected object's saved template
   const currentAnim = obj.userData.animTemplate || 'none';
   document.querySelectorAll('.anim-btn').forEach(b => {
@@ -3368,6 +3397,7 @@ async function saveScene(saveAs = false) {
       mp4Path: pipelineState.mp4Path,
       mp4Filename: pipelineState.mp4Filename,
       referenceFrame: pipelineState.referenceFrame,
+      referenceFrameTimestamp: pipelineState.referenceFrameTimestamp,
       referenceFrameImage: pipelineState.referenceFrameImage,
       nanobananaPrompt: pipelineState.nanobananaPrompt,
       nanobananaReferenceImages: [...(pipelineState.nanobananaReferenceImages || [])],
@@ -3688,6 +3718,7 @@ async function loadScene(filePath) {
     pipelineState.mp4Path                  = p.mp4Path || null;
     pipelineState.mp4Filename              = p.mp4Filename || null;
     pipelineState.referenceFrame           = p.referenceFrame || null;
+    pipelineState.referenceFrameTimestamp  = (p.referenceFrameTimestamp != null) ? p.referenceFrameTimestamp : null;
     pipelineState.referenceFrameImage      = p.referenceFrameImage || null;
     pipelineState.nanobananaPrompt         = p.nanobananaPrompt || null;
     pipelineState.nanobananaReferenceImages = Array.isArray(p.nanobananaReferenceImages) ? p.nanobananaReferenceImages.slice() : [];
@@ -4422,12 +4453,12 @@ function _bodyForStep(step) {
   if (step.id === 'frame') {
     return `
       <div class="step-content frame-body">
-        <div class="pipeline-label">Frame (seconds)</div>
+        <div class="pipeline-label">Frame number</div>
         <div style="display:flex;gap:4px;align-items:center;">
-          <input type="number" class="pipeline-input" id="frame-input" min="0" step="0.1" value="0">
+          <input type="number" class="pipeline-input" id="frame-input" min="1" step="1" value="1">
           <button id="confirm-frame" class="pipeline-confirm-btn">✓</button>
         </div>
-        <div class="pipeline-hint-block">Guides Nanobanana's camera angle and proportions</div>
+        <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps · guides Nanobanana camera angle</div>
       </div>`;
   }
   if (step.id === 'nanobanana') {
@@ -4861,23 +4892,26 @@ function restorePipelineUI() {
     }
   }
 
-  // Reference frame card — thumbnail + click-to-fullscreen
+  // Reference frame card — thumbnail + click-to-fullscreen (Simple Mode + Node Editor)
   if (pipelineState.referenceFrameImage) {
-    const frameBody = document.querySelector('.step-card[data-step-key="frame"] .step-body');
-    if (frameBody) {
-      const imgUrl = fileUrl(pipelineState.referenceFrameImage);
-      frameBody.innerHTML = `
-        <div style="position:relative;cursor:zoom-in;padding:6px;" title="Click to view full size">
-          <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;">
-          <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">
-            Frame: ${pipelineState.referenceFrame || 0}s
-          </div>
-        </div>`;
-      const img = frameBody.querySelector('img');
+    const imgUrl = fileUrl(pipelineState.referenceFrameImage);
+    const thumbHTML = `
+      <div style="position:relative;cursor:zoom-in;padding:6px;" title="Click to view full size">
+        <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;">
+        <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">
+          Frame ${pipelineState.referenceFrame || 1}
+        </div>
+      </div>`;
+    const wireThumb = (root) => {
+      const img = root.querySelector('img');
       if (img) img.addEventListener('click', () => {
         showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
       });
-    }
+    };
+    const frameBody = document.querySelector('.step-card[data-step-key="frame"] .step-body');
+    if (frameBody) { frameBody.innerHTML = thumbHTML; wireThumb(frameBody); }
+    const frameNodeBody = document.querySelector('.node-card[data-node="frame"] .node-body');
+    if (frameNodeBody) { frameNodeBody.innerHTML = `<div class="node-content">${thumbHTML}</div>`; wireThumb(frameNodeBody); }
     updateNanobananaFramePreview();
   }
 
@@ -4899,18 +4933,16 @@ function restorePipelineUI() {
     }
   });
 
-  // Nanobanana result image — replaces the form body, click → fullscreen
+  // Nanobanana result image — render with Keep/Regenerate UI in BOTH views, then swap to "kept"
   if (pipelineState.nanobananaResultImage) {
-    const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
-    if (nbBody) {
-      const imgUrl = fileUrl(pipelineState.nanobananaResultImage);
-      nbBody.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;cursor:zoom-in;" title="Click to view full size">`;
-      const img = nbBody.querySelector('img');
-      if (img) img.addEventListener('click', () => {
-        showNanobananaFullscreen(imgUrl, pipelineState.nanobananaResultImage);
-      });
-    }
-    // Auto-fill Seedance reference area if we have a seedance ref
+    const imgUrl = fileUrl(pipelineState.nanobananaResultImage);
+    showNanobananaResult(imgUrl, pipelineState.nanobananaResultImage);
+    document.querySelectorAll('.nb-result-actions').forEach(row => {
+      row.innerHTML = `
+        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
+          ✓ Image kept — ready for Seedance
+        </div>`;
+    });
     const sdRefArea = document.getElementById('sd-ref-image-area');
     if (sdRefArea && pipelineState.seedanceReferenceImage) {
       const sdUrl = fileUrl(pipelineState.seedanceReferenceImage);
@@ -4926,13 +4958,16 @@ function restorePipelineUI() {
     });
   }
 
-  // Seedance result video
+  // Seedance result video — render with Keep/Regenerate UI in BOTH views, then swap to "kept"
   if (pipelineState.seedanceResultVideo) {
-    const sdBody = document.querySelector('.step-card[data-step-key="seedance"] .step-body');
-    if (sdBody) {
-      const vidUrl = fileUrl(pipelineState.seedanceResultVideo);
-      sdBody.innerHTML = `<video src="${vidUrl}" style="width:100%;border-radius:4px;" controls muted loop></video>`;
-    }
+    const vidUrl = fileUrl(pipelineState.seedanceResultVideo);
+    showSeedanceResult(vidUrl, pipelineState.seedanceResultVideo);
+    document.querySelectorAll('.sd-result-actions').forEach(row => {
+      row.innerHTML = `
+        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
+          ✓ Video kept — ready for Upscale
+        </div>`;
+    });
   }
 
   // Upscale prompt textareas
@@ -5027,23 +5062,14 @@ async function runNanobananaGenerate(scope) {
       }
       if (status.status === 'complete') {
         clearInterval(poll);
-        const imageUrl = status.imageUrl || status.imagePath;
+        const imageUrl = status.imageUrl || ('file:///' + (status.imagePath || '').replace(/\\/g, '/'));
         const imagePath = status.imagePath || null;
-        if (stepBody) {
-          stepBody.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;cursor:zoom-in;" alt="Nanobanana result" title="Click to view full size">`;
-          const resultImg = stepBody.querySelector('img');
-          if (resultImg) {
-            resultImg.addEventListener('click', (ev) => {
-              ev.stopPropagation();
-              showNanobananaFullscreen(imageUrl, imagePath);
-            });
-          }
-        } else if (btn) {
+        if (btn) {
           btn.disabled = false;
           btn.textContent = 'Generate Image →';
         }
-        onNanobananaComplete(imagePath);
-        showToast('Nanobanana image ready ✓');
+        // Render Keep / Regenerate UI; user must explicitly Keep to commit and advance.
+        showNanobananaResult(imageUrl, imagePath);
         markSceneModified();
       } else if (status.status === 'error') {
         clearInterval(poll);
@@ -5080,8 +5106,11 @@ async function runSeedanceGenerate(scope) {
       if (status.status === 'complete') {
         clearInterval(poll);
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
-        pipelineState.seedanceResultVideo = status.videoUrl;
-        advanceFromStep('seedance');
+        const videoUrl = status.videoUrl;
+        const videoPath = status.videoPath || status.videoUrl;
+        // Show Keep / Regenerate; user explicitly commits before advancing.
+        showSeedanceResult(videoUrl, videoPath);
+        markSceneModified();
       } else if (status.status === 'error') {
         clearInterval(poll);
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
@@ -5127,30 +5156,288 @@ async function runUpscaleGenerate(scope) {
 function updateNanobananaFramePreview() {
   if (!pipelineState.referenceFrameImage) return;
   const imgUrl = 'file:///' + pipelineState.referenceFrameImage.replace(/\\/g, '/');
-
-  const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
-  if (!nbBody) return;
-
-  let preview = nbBody.querySelector('#nb-frame-preview');
-  if (!preview) {
-    preview = document.createElement('div');
-    preview.id = 'nb-frame-preview';
-    preview.style.cssText = `
-      margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);`;
-    // Insert at top of the inner step-content (before the existing form)
-    const inner = nbBody.querySelector('.step-content') || nbBody.firstElementChild || nbBody;
-    inner.insertBefore(preview, inner.firstChild);
-  }
-
-  preview.innerHTML = `
+  const previewHTML = `
     <div style="font-size:9px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">
       Input Frame
     </div>
     <img src="${imgUrl}" style="width:100%;height:60px;object-fit:cover;border-radius:4px;cursor:zoom-in;display:block;" title="Click to view full size">`;
-  const img = preview.querySelector('img');
-  if (img) img.addEventListener('click', () => {
-    showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
+
+  const wireFramePreviewClick = (preview) => {
+    const img = preview.querySelector('img');
+    if (img) img.addEventListener('click', () => {
+      showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
+    });
+  };
+
+  // Simple Mode card
+  const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
+  if (nbBody) {
+    let preview = nbBody.querySelector('.nb-frame-preview');
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.className = 'nb-frame-preview';
+      preview.style.cssText = `margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);`;
+      const inner = nbBody.querySelector('.step-content') || nbBody.firstElementChild || nbBody;
+      inner.insertBefore(preview, inner.firstChild);
+    }
+    preview.innerHTML = previewHTML;
+    wireFramePreviewClick(preview);
+  }
+
+  // Node Editor node
+  const nbNodeBody = document.querySelector('.node-card[data-node="nanobanana"] .node-body');
+  if (nbNodeBody) {
+    let preview = nbNodeBody.querySelector('.nb-frame-preview');
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.className = 'nb-frame-preview';
+      preview.style.cssText = `margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);`;
+      const inner = nbNodeBody.querySelector('.node-content') || nbNodeBody.firstElementChild || nbNodeBody;
+      inner.insertBefore(preview, inner.firstChild);
+    }
+    preview.innerHTML = previewHTML;
+    wireFramePreviewClick(preview);
+  }
+}
+
+// ---- Node Editor body templates (mirrors buildNodeEditor's nodeTplBody) ----
+const _NODE_PROMPT_IDS = { nanobanana: 'nb-prompt-node', seedance: 'sd-prompt-node', upscale: 'up-prompt-node' };
+const _NODE_PROMPT_PH  = {
+  nanobanana: 'Describe camera angle, lighting and style...',
+  seedance:   'Describe the visual tone and style for the video...',
+  upscale:    'Upscale instructions...'
+};
+function _nodeFormBodyHTML(stage) {
+  return `<div class="node-content"><div class="node-tpl-body">
+      <textarea id="${_NODE_PROMPT_IDS[stage]}" class="node-prompt" rows="2" placeholder="${_NODE_PROMPT_PH[stage]}"></textarea>
+      <button class="template-picker-btn" data-stage="${stage}">⚡ Templates</button>
+    </div></div>`;
+}
+function _wireNodeFormBody(stage, nodeEl) {
+  if (!nodeEl) return;
+  const tpl = nodeEl.querySelector('.template-picker-btn');
+  if (tpl) tpl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker(stage, _NODE_PROMPT_IDS[stage]);
   });
+  const ta = nodeEl.querySelector('textarea.node-prompt');
+  if (ta) {
+    const stateKey = stage === 'nanobanana' ? 'nanobananaPrompt'
+                   : stage === 'seedance'   ? 'seedancePrompt'
+                   : 'upscalePrompt';
+    if (pipelineState[stateKey]) ta.value = pipelineState[stateKey];
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    ta.addEventListener('mousedown', (e) => e.stopPropagation());
+    ta.addEventListener('input', () => {
+      pipelineState[stateKey] = ta.value;
+      const simpleId = _NODE_PROMPT_IDS[stage].replace('-node', '');
+      const other = document.getElementById(simpleId);
+      if (other && other.value !== ta.value) other.value = ta.value;
+      markSceneModified();
+    });
+  }
+}
+
+function rebuildNanobananaCardBody() {
+  const nbCard = document.querySelector('.step-card[data-step-key="nanobanana"]');
+  const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === 'nanobanana');
+  if (nbCard && stepDef) {
+    const bodyEl = nbCard.querySelector('.step-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = _bodyForStep(stepDef);
+      wireStepCardInteractions(nbCard, stepDef);
+    }
+  }
+  // Also rebuild Node Editor node body
+  const nbNode = document.querySelector('.node-card[data-node="nanobanana"]');
+  if (nbNode) {
+    const nbNodeBody = nbNode.querySelector('.node-body');
+    if (nbNodeBody) {
+      nbNodeBody.innerHTML = _nodeFormBodyHTML('nanobanana');
+      _wireNodeFormBody('nanobanana', nbNode);
+    }
+  }
+}
+
+function rebuildSeedanceCardBody() {
+  const sdCard = document.querySelector('.step-card[data-step-key="seedance"]');
+  const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === 'seedance');
+  if (sdCard && stepDef) {
+    const bodyEl = sdCard.querySelector('.step-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = _bodyForStep(stepDef);
+      wireStepCardInteractions(sdCard, stepDef);
+    }
+  }
+  // Also rebuild Node Editor node body
+  const sdNode = document.querySelector('.node-card[data-node="seedance"]');
+  if (sdNode) {
+    const sdNodeBody = sdNode.querySelector('.node-body');
+    if (sdNodeBody) {
+      sdNodeBody.innerHTML = _nodeFormBodyHTML('seedance');
+      _wireNodeFormBody('seedance', sdNode);
+    }
+  }
+}
+
+function _nanobananaResultHTML(imageUrl) {
+  return `
+    <div class="nb-result-img-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+      <img src="${imageUrl}" style="width:100%;height:140px;object-fit:cover;display:block;cursor:zoom-in;" title="Click to view full size">
+      <div style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);border-radius:3px;padding:2px 6px;font-size:9px;color:rgba(255,255,255,0.7);pointer-events:none;">Click to expand</div>
+    </div>
+    <div class="nb-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
+      <button class="nb-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
+      <button class="nb-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+    </div>`;
+}
+
+function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
+  if (!container) return;
+  container.querySelector('img')?.addEventListener('click', () => {
+    showNanobananaFullscreen(imageUrl, imagePath);
+  });
+  container.querySelector('.nb-keep-btn')?.addEventListener('click', () => {
+    pipelineState.nanobananaResultImage = imagePath;
+    pipelineState.seedanceReferenceImage = imagePath;
+
+    // Auto-fill seedance reference area in Simple Mode
+    const sdRefArea = document.getElementById('sd-ref-image-area');
+    if (sdRefArea) {
+      sdRefArea.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+    }
+
+    // Replace the Keep/Regenerate row with "kept" status in BOTH views
+    document.querySelectorAll('.nb-result-actions').forEach(row => {
+      row.innerHTML = `
+        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
+          ✓ Image kept — ready for Seedance
+        </div>`;
+    });
+
+    advanceFromStep('nanobanana');
+    showToast('Nanobanana image ready ✓');
+    markSceneModified();
+  });
+  container.querySelector('.nb-regenerate-btn')?.addEventListener('click', () => {
+    pipelineState.nanobananaResultImage = null;
+    pipelineState.seedanceReferenceImage = null;
+
+    const savedPrompt = pipelineState.nanobananaPrompt || '';
+    const savedRefs = [...(pipelineState.nanobananaReferenceImages || [])];
+
+    rebuildNanobananaCardBody();
+
+    setTimeout(() => {
+      const nbPrompt = document.getElementById('nb-prompt');
+      if (nbPrompt) nbPrompt.value = savedPrompt;
+      const nbPromptNode = document.getElementById('nb-prompt-node');
+      if (nbPromptNode) nbPromptNode.value = savedPrompt;
+      savedRefs.forEach((imgPath, i) => {
+        if (!imgPath) return;
+        const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
+        if (slot) {
+          const refUrl = 'file:///' + imgPath.replace(/\\/g, '/');
+          slot.innerHTML = `<img src="${refUrl}">`;
+          slot.classList.add('filled');
+        }
+      });
+      updateNanobananaFramePreview();
+      if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+    }, 50);
+  });
+}
+
+function showNanobananaResult(imageUrl, imagePath) {
+  const html = _nanobananaResultHTML(imageUrl);
+
+  // Simple Mode card
+  const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
+  if (nbBody) {
+    nbBody.innerHTML = html;
+    _wireNanobananaResultButtons(nbBody, imageUrl, imagePath);
+  }
+
+  // Node Editor node
+  const nbNodeBody = document.querySelector('.node-card[data-node="nanobanana"] .node-body');
+  if (nbNodeBody) {
+    nbNodeBody.innerHTML = `<div class="node-content">${html}</div>`;
+    _wireNanobananaResultButtons(nbNodeBody, imageUrl, imagePath);
+  }
+}
+
+function _seedanceResultHTML(videoUrl) {
+  return `
+    <div class="sd-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+      <video src="${videoUrl}" style="width:100%;display:block;cursor:zoom-in;" muted loop title="Click to view full size"></video>
+      <div style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);border-radius:3px;padding:2px 6px;font-size:9px;color:rgba(255,255,255,0.7);pointer-events:none;">Click to expand</div>
+    </div>
+    <div class="sd-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
+      <button class="sd-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
+      <button class="sd-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+    </div>`;
+}
+
+function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
+  if (!container) return;
+  const video = container.querySelector('video');
+  if (video) {
+    video.addEventListener('click', () => showNanobananaFullscreen(videoUrl, videoPath));
+    video.play().catch(() => {});
+  }
+  container.querySelector('.sd-keep-btn')?.addEventListener('click', () => {
+    pipelineState.seedanceResultVideo = videoPath;
+
+    document.querySelectorAll('.sd-result-actions').forEach(row => {
+      row.innerHTML = `
+        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
+          ✓ Video kept — ready for Upscale
+        </div>`;
+    });
+
+    advanceFromStep('seedance');
+    showToast('Seedance video ready ✓');
+    markSceneModified();
+  });
+  container.querySelector('.sd-regenerate-btn')?.addEventListener('click', () => {
+    pipelineState.seedanceResultVideo = null;
+
+    const savedPrompt = pipelineState.seedancePrompt || '';
+    const savedRef = pipelineState.seedanceReferenceImage;
+
+    rebuildSeedanceCardBody();
+
+    setTimeout(() => {
+      const sdPrompt = document.getElementById('sd-prompt');
+      if (sdPrompt) sdPrompt.value = savedPrompt;
+      const sdPromptNode = document.getElementById('sd-prompt-node');
+      if (sdPromptNode) sdPromptNode.value = savedPrompt;
+      if (savedRef) {
+        const sdRefArea = document.getElementById('sd-ref-image-area');
+        if (sdRefArea) {
+          const refUrl = 'file:///' + savedRef.replace(/\\/g, '/');
+          sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+        }
+      }
+      if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+    }, 50);
+  });
+}
+
+function showSeedanceResult(videoUrl, videoPath) {
+  const html = _seedanceResultHTML(videoUrl);
+
+  const sdBody = document.querySelector('.step-card[data-step-key="seedance"] .step-body');
+  if (sdBody) {
+    sdBody.innerHTML = html;
+    _wireSeedanceResultButtons(sdBody, videoUrl, videoPath);
+  }
+
+  const sdNodeBody = document.querySelector('.node-card[data-node="seedance"] .node-body');
+  if (sdNodeBody) {
+    sdNodeBody.innerHTML = `<div class="node-content">${html}</div>`;
+    _wireSeedanceResultButtons(sdNodeBody, videoUrl, videoPath);
+  }
 }
 
 function wireStepCardInteractions(card, step) {
@@ -5159,32 +5446,46 @@ function wireStepCardInteractions(card, step) {
     if (confirmBtn) confirmBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const input = card.querySelector('#frame-input');
-      pipelineState.referenceFrame = input ? input.value : '0';
+      const FPS = 30;
+      const frameNumber = Math.max(1, parseInt(input ? input.value : '1', 10) || 1);
+      const timestampSeconds = (frameNumber - 1) / FPS;
+      pipelineState.referenceFrame = frameNumber;
+      pipelineState.referenceFrameTimestamp = timestampSeconds;
       if (pipelineState.mp4Path) {
         confirmBtn.disabled = true;
         confirmBtn.textContent = '…';
         try {
           const result = await window.electronAPI.extractFrame({
             mp4Path: pipelineState.mp4Path,
-            timestamp: parseFloat(pipelineState.referenceFrame) || 0,
+            timestamp: timestampSeconds,
             saveFolder: localStorage.getItem('refluent_mp4_folder') || null
           });
           if (result && result.success && result.framePath) {
             pipelineState.referenceFrameImage = result.framePath;
             const imgUrl = 'file:///' + result.framePath.replace(/\\/g, '/');
-            const frameBody = card.querySelector('.step-body');
-            if (frameBody) {
-              frameBody.innerHTML = `
+            const frameThumbHTML = `
                 <div style="position:relative;padding:6px;">
                   <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
                   <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">
-                    Frame at ${pipelineState.referenceFrame}s
+                    Frame ${frameNumber}
                   </div>
                 </div>`;
-              const img = frameBody.querySelector('img');
+            const wireThumbClick = (root) => {
+              const img = root.querySelector('img');
               if (img) img.addEventListener('click', () => {
                 showNanobananaFullscreen(imgUrl, result.framePath);
               });
+            };
+            const frameBody = card.querySelector('.step-body');
+            if (frameBody) {
+              frameBody.innerHTML = frameThumbHTML;
+              wireThumbClick(frameBody);
+            }
+            // Mirror into Node Editor frame node
+            const frameNodeBody = document.querySelector('.node-card[data-node="frame"] .node-body');
+            if (frameNodeBody) {
+              frameNodeBody.innerHTML = `<div class="node-content">${frameThumbHTML}</div>`;
+              wireThumbClick(frameNodeBody);
             }
             updateNanobananaFramePreview();
             markSceneModified();
