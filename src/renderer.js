@@ -3362,6 +3362,7 @@ async function saveScene(saveAs = false) {
 
     pipeline: {
       currentStep: pipelineState.currentStep,
+      activeSteps: [...(pipelineState.activeSteps || [])],
       mp4Path: pipelineState.mp4Path,
       mp4Filename: pipelineState.mp4Filename,
       referenceFrame: pipelineState.referenceFrame,
@@ -3670,29 +3671,32 @@ async function loadScene(filePath) {
   // ---- Pipeline ----
   if (data.pipeline) {
     const p = data.pipeline;
-    Object.assign(pipelineState, p);
-    if (!Array.isArray(pipelineState.nanobananaReferenceImages)) {
-      pipelineState.nanobananaReferenceImages = [];
-    }
+    pipelineState.currentStep              = p.currentStep || 0;
+    pipelineState.activeSteps              = Array.isArray(p.activeSteps) && p.activeSteps.length
+      ? p.activeSteps.slice()
+      : ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale'];
+    pipelineState.mp4Path                  = p.mp4Path || null;
+    pipelineState.mp4Filename              = p.mp4Filename || null;
+    pipelineState.referenceFrame           = p.referenceFrame || null;
+    pipelineState.referenceFrameImage      = p.referenceFrameImage || null;
+    pipelineState.nanobananaPrompt         = p.nanobananaPrompt || null;
+    pipelineState.nanobananaReferenceImages = Array.isArray(p.nanobananaReferenceImages) ? p.nanobananaReferenceImages.slice() : [];
+    pipelineState.nanobananaResultImage    = p.nanobananaResultImage || null;
+    pipelineState.nanobananaSkipped        = !!p.nanobananaSkipped;
+    pipelineState.seedancePrompt           = p.seedancePrompt || null;
+    pipelineState.seedanceReferenceImage   = p.seedanceReferenceImage || null;
+    pipelineState.seedanceResultVideo      = p.seedanceResultVideo || null;
+    pipelineState.seedanceSkipped          = !!p.seedanceSkipped;
+    pipelineState.upscalePrompt            = p.upscalePrompt || null;
+    pipelineState.upscaleResolution        = p.upscaleResolution || '4k';
+    pipelineState.upscaleResult            = p.upscaleResult || null;
+    pipelineState.upscaleSkipped           = !!p.upscaleSkipped;
+
     rebuildSimplePanel();
     buildNodeEditor();
-    const startStep = pipelineState.mp4Path ? 'frame' : 'mp4';
-    activateStep(startStep);
-    updateStepMediaPreviews();
-    if (typeof updateNodeMediaPreviews === 'function') updateNodeMediaPreviews();
 
-    if (pipelineState.nanobananaPrompt) {
-      const el = document.querySelector('.step-card[data-step-key="nanobanana"] #nb-prompt');
-      if (el) el.value = pipelineState.nanobananaPrompt;
-    }
-    if (pipelineState.seedancePrompt) {
-      const el = document.querySelector('.step-card[data-step-key="seedance"] #sd-prompt');
-      if (el) el.value = pipelineState.seedancePrompt;
-    }
-    if (pipelineState.upscalePrompt) {
-      const el = document.querySelector('.step-card[data-step-key="upscale"] #up-prompt');
-      if (el) el.value = pipelineState.upscalePrompt;
-    }
+    // Wait for the freshly-rebuilt DOM to settle, then restore card visuals.
+    setTimeout(() => restorePipelineUI(), 100);
   }
 
   currentScenePath = filePath;
@@ -4156,12 +4160,15 @@ function advanceFromStep(stepId) {
   if (next) activateStep(next);
 }
 
-function onNanobananaComplete(imageUrl) {
-  pipelineState.nanobananaResultImage = imageUrl;
-  pipelineState.seedanceReferenceImage = imageUrl;
+function onNanobananaComplete(imagePath) {
+  pipelineState.nanobananaResultImage = imagePath;
+  pipelineState.seedanceReferenceImage = imagePath;
   const refArea = document.getElementById('sd-ref-image-area');
-  if (refArea) {
-    refArea.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+  if (refArea && imagePath) {
+    const imgUrl = imagePath.startsWith('file:')
+      ? imagePath
+      : 'file:///' + imagePath.replace(/\\/g, '/');
+    refArea.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
   }
   advanceFromStep('nanobanana');
 }
@@ -4354,18 +4361,43 @@ function toggleSkipStep(stepId) {
   syncNodeEditor();
 }
 
+function _toFileUrl(p) {
+  if (!p) return '';
+  if (p.startsWith('file:')) return p;
+  return 'file:///' + p.replace(/\\/g, '/');
+}
+
+function _buildMp4ThumbnailHTML(filename, mp4Url) {
+  return `
+    <div class="mp4-thumb-wrap" style="position:relative;cursor:zoom-in;" title="Click to preview">
+      <video src="${mp4Url}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;" muted preload="metadata"></video>
+      <div style="position:absolute;top:36px;left:50%;transform:translate(-50%,-50%);width:24px;height:24px;background:rgba(0,0,0,0.6);border-radius:50%;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+        <div style="width:0;height:0;border-style:solid;border-width:5px 0 5px 9px;border-color:transparent transparent transparent #fff;margin-left:2px;"></div>
+      </div>
+      <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${filename || ''}</div>
+    </div>`;
+}
+
+function _wireMp4Thumbnail(scope, mp4Path) {
+  if (!scope || !mp4Path) return;
+  const wrap = scope.querySelector('.mp4-thumb-wrap');
+  const video = scope.querySelector('video');
+  if (video) {
+    video.addEventListener('loadedmetadata', () => { try { video.currentTime = 0.1; } catch (e) {} });
+  }
+  if (wrap) {
+    wrap.addEventListener('click', () => {
+      showNanobananaFullscreen(_toFileUrl(mp4Path), mp4Path);
+    });
+  }
+}
+
 function updateStepMediaPreviews() {
   if (pipelineState.mp4Path) {
     const content = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
     if (content && !content.querySelector('input, textarea, button')) {
-      const safe = `file:///${pipelineState.mp4Path.replace(/\\/g, '/')}`;
-      content.innerHTML = `<video src="${safe}" style="width:100%;height:100%;object-fit:cover;" preload="metadata" muted playsinline></video>`;
-      const v = content.querySelector('video');
-      if (v) {
-        v.addEventListener('loadedmetadata', () => { try { v.currentTime = 0.1; } catch (e) {} });
-        v.addEventListener('mouseenter', () => { v.play().catch(() => {}); });
-        v.addEventListener('mouseleave', () => { v.pause(); try { v.currentTime = 0.1; } catch (e) {} });
-      }
+      content.innerHTML = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toFileUrl(pipelineState.mp4Path));
+      _wireMp4Thumbnail(content, pipelineState.mp4Path);
     }
   }
 }
@@ -4748,11 +4780,14 @@ function showNanobananaFullscreen(imageUrl, imagePath) {
 
   const safeImageUrl = (imageUrl || '').replace(/"/g, '&quot;');
   const safePath = (imagePath || '').replace(/[<>"]/g, '');
+  const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(imagePath || imageUrl || '');
+  const mediaTag = isVideo
+    ? `<video src="${safeImageUrl}" style="max-width:90vw;max-height:85vh;border-radius:6px;box-shadow:0 24px 80px rgba(0,0,0,0.8);" controls autoplay muted playsinline></video>`
+    : `<img src="${safeImageUrl}" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:6px;box-shadow:0 24px 80px rgba(0,0,0,0.8);">`;
 
   overlay.innerHTML = `
     <div style="position:relative;max-width:90vw;max-height:90vh;">
-      <img src="${safeImageUrl}"
-        style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:6px;box-shadow:0 24px 80px rgba(0,0,0,0.8);">
+      ${mediaTag}
       <div style="position:absolute;bottom:-36px;left:0;right:0;text-align:center;font-size:11px;color:var(--text-secondary);font-family:var(--font);word-break:break-all;">
         ${safePath}
       </div>
@@ -4793,6 +4828,128 @@ function showNanobananaFullscreen(imageUrl, imagePath) {
     if (e.key === 'Escape') closeOverlay();
   };
   document.addEventListener('keydown', escHandler);
+}
+
+function restorePipelineUI() {
+  // Idempotent — passes through values already in `file://` form,
+  // wraps raw Windows paths once. Guards against double-prefix bugs from
+  // older saves where pipelineState fields were stored as URLs.
+  const fileUrl = (p) => {
+    if (!p) return null;
+    if (p.startsWith('file:')) return p;
+    return 'file:///' + p.replace(/\\/g, '/');
+  };
+
+  // MP4 card — video thumbnail with play overlay + click-to-fullscreen
+  if (pipelineState.mp4Path) {
+    const mp4Body = document.querySelector('.step-card[data-step-key="mp4"] .step-body');
+    if (mp4Body) {
+      mp4Body.innerHTML = `<div class="step-content">${_buildMp4ThumbnailHTML(pipelineState.mp4Filename, fileUrl(pipelineState.mp4Path))}</div>`;
+      _wireMp4Thumbnail(mp4Body, pipelineState.mp4Path);
+    }
+  }
+
+  // Reference frame card — thumbnail + click-to-fullscreen
+  if (pipelineState.referenceFrameImage) {
+    const frameBody = document.querySelector('.step-card[data-step-key="frame"] .step-body');
+    if (frameBody) {
+      const imgUrl = fileUrl(pipelineState.referenceFrameImage);
+      frameBody.innerHTML = `
+        <div style="position:relative;cursor:zoom-in;padding:6px;" title="Click to view full size">
+          <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;">
+          <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">
+            Frame: ${pipelineState.referenceFrame || 0}s
+          </div>
+        </div>`;
+      const img = frameBody.querySelector('img');
+      if (img) img.addEventListener('click', () => {
+        showNanobananaFullscreen(imgUrl, pipelineState.referenceFrameImage);
+      });
+    }
+  }
+
+  // Nanobanana prompt textareas (Simple + Node)
+  if (pipelineState.nanobananaPrompt) {
+    ['nb-prompt', 'nb-prompt-node'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = pipelineState.nanobananaPrompt;
+    });
+  }
+
+  // Nanobanana reference image slots
+  pipelineState.nanobananaReferenceImages.forEach((imgPath, i) => {
+    if (!imgPath) return;
+    const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
+    if (slot) {
+      slot.innerHTML = `<img src="${fileUrl(imgPath)}">`;
+      slot.classList.add('filled');
+    }
+  });
+
+  // Nanobanana result image — replaces the form body, click → fullscreen
+  if (pipelineState.nanobananaResultImage) {
+    const nbBody = document.querySelector('.step-card[data-step-key="nanobanana"] .step-body');
+    if (nbBody) {
+      const imgUrl = fileUrl(pipelineState.nanobananaResultImage);
+      nbBody.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;cursor:zoom-in;" title="Click to view full size">`;
+      const img = nbBody.querySelector('img');
+      if (img) img.addEventListener('click', () => {
+        showNanobananaFullscreen(imgUrl, pipelineState.nanobananaResultImage);
+      });
+    }
+    // Auto-fill Seedance reference area if we have a seedance ref
+    const sdRefArea = document.getElementById('sd-ref-image-area');
+    if (sdRefArea && pipelineState.seedanceReferenceImage) {
+      const sdUrl = fileUrl(pipelineState.seedanceReferenceImage);
+      sdRefArea.innerHTML = `<img src="${sdUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+    }
+  }
+
+  // Seedance prompt textareas
+  if (pipelineState.seedancePrompt) {
+    ['sd-prompt', 'sd-prompt-node'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = pipelineState.seedancePrompt;
+    });
+  }
+
+  // Seedance result video
+  if (pipelineState.seedanceResultVideo) {
+    const sdBody = document.querySelector('.step-card[data-step-key="seedance"] .step-body');
+    if (sdBody) {
+      const vidUrl = fileUrl(pipelineState.seedanceResultVideo);
+      sdBody.innerHTML = `<video src="${vidUrl}" style="width:100%;border-radius:4px;" controls muted loop></video>`;
+    }
+  }
+
+  // Upscale prompt textareas
+  if (pipelineState.upscalePrompt) {
+    ['up-prompt', 'up-prompt-node'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = pipelineState.upscalePrompt;
+    });
+  }
+
+  // Skipped states
+  if (pipelineState.nanobananaSkipped) {
+    document.querySelector('.step-card[data-step-key="nanobanana"]')?.classList.add('skipped');
+  }
+  if (pipelineState.seedanceSkipped) {
+    document.querySelector('.step-card[data-step-key="seedance"]')?.classList.add('skipped');
+  }
+  if (pipelineState.upscaleSkipped) {
+    document.querySelector('.step-card[data-step-key="upscale"]')?.classList.add('skipped');
+  }
+
+  // Active step — currentStep is a numeric index into activeSteps
+  const steps = (typeof getActivePipelineSteps === 'function')
+    ? getActivePipelineSteps()
+    : (pipelineState.activeSteps || ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale']);
+  const stepId = steps[pipelineState.currentStep] || 'mp4';
+  if (typeof activateStep === 'function') activateStep(stepId);
+
+  // Re-wire the fullscreen prompt editor since textareas were replaced/repopulated
+  if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
 }
 
 async function runNanobananaGenerate(scope) {
@@ -4872,7 +5029,7 @@ async function runNanobananaGenerate(scope) {
           btn.disabled = false;
           btn.textContent = 'Generate Image →';
         }
-        onNanobananaComplete(imageUrl);
+        onNanobananaComplete(imagePath);
         showToast('Nanobanana image ready ✓');
         markSceneModified();
       } else if (status.status === 'error') {
