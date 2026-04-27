@@ -4437,10 +4437,18 @@ function _wireMp4Thumbnail(scope, mp4Path) {
 
 function updateStepMediaPreviews() {
   if (pipelineState.mp4Path) {
+    const html = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toFileUrl(pipelineState.mp4Path));
+    // Simple Mode card
     const content = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
     if (content && !content.querySelector('input, textarea, button')) {
-      content.innerHTML = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toFileUrl(pipelineState.mp4Path));
+      content.innerHTML = html;
       _wireMp4Thumbnail(content, pipelineState.mp4Path);
+    }
+    // Node Editor node
+    const nodeBody = document.querySelector('.node-card[data-node="mp4"] .node-body');
+    if (nodeBody) {
+      nodeBody.innerHTML = `<div class="node-content">${html}</div>`;
+      _wireMp4Thumbnail(nodeBody, pipelineState.mp4Path);
     }
   }
 }
@@ -4478,7 +4486,7 @@ function _bodyForStep(step) {
           ${tplBtn}
         </div>
         <textarea id="nb-prompt" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
-        <button id="nb-generate-btn" class="pipeline-generate-btn">Generate Image →</button>
+        <button id="nb-generate-btn" class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
       </div>`;
   }
   if (step.id === 'seedance') {
@@ -4492,7 +4500,7 @@ function _bodyForStep(step) {
           ${tplBtn}
         </div>
         <textarea id="sd-prompt" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
-        <button id="sd-generate-btn" class="pipeline-generate-btn">Generate Video →</button>
+        <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
       </div>`;
   }
   if (step.id === 'upscale') {
@@ -4507,7 +4515,7 @@ function _bodyForStep(step) {
           <button class="upscale-res-btn active" data-res="4k">4K</button>
           <button class="upscale-res-btn" data-res="8k">8K</button>
         </div>
-        <button id="up-generate-btn" class="pipeline-generate-btn">Upscale →</button>
+        <button id="up-generate-btn" class="pipeline-generate-btn up-generate-btn">Upscale →</button>
       </div>`;
   }
   return '<div class="step-content"></div>';
@@ -4763,50 +4771,44 @@ function wireTemplateButton(card, stage, textareaId) {
 function wireRefImageSlots(scope) {
   const slots = (scope || document).querySelectorAll('.ref-img-slot');
   slots.forEach(slot => {
-    const slotIndex = parseInt(slot.dataset.slot, 10);
-    const existing = pipelineState.nanobananaReferenceImages[slotIndex];
-    if (existing) {
-      const safe = `file:///${existing.replace(/\\/g, '/')}`;
-      slot.innerHTML = `<img src="${safe}">`;
-      slot.classList.add('filled');
-    }
+    if (slot.dataset.wired === '1') return;
+    slot.dataset.wired = '1';
     slot.addEventListener('click', async (e) => {
       e.stopPropagation();
       const filePath = await window.electronAPI.openFileDialog({
         filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
       });
       if (!filePath) return;
+      const slotIndex = parseInt(slot.dataset.slot, 10);
       pipelineState.nanobananaReferenceImages[slotIndex] = filePath;
-      const safe = `file:///${filePath.replace(/\\/g, '/')}`;
-      slot.innerHTML = `<img src="${safe}">`;
-      slot.classList.add('filled');
+      refreshRefImageSlots();
       updateRefImageHint();
+      markSceneModified();
     });
     slot.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      const slotIndex = parseInt(slot.dataset.slot, 10);
       pipelineState.nanobananaReferenceImages[slotIndex] = null;
-      slot.innerHTML = '+';
-      slot.classList.remove('filled');
+      refreshRefImageSlots();
       updateRefImageHint();
+      markSceneModified();
     });
   });
+  refreshRefImageSlots();
   updateRefImageHint();
 }
 
 function updateRefImageHint() {
   const filled = pipelineState.nanobananaReferenceImages.filter(Boolean).length;
-  const hint = document.getElementById('nb-img-hint');
-  if (!hint) return;
-  if (filled <= 1) {
-    hint.textContent = 'Strong, clear direction ✓';
-    hint.style.color = 'var(--accent)';
-  } else if (filled === 2) {
-    hint.textContent = 'Balanced reference';
-    hint.style.color = 'var(--text-secondary)';
-  } else {
-    hint.textContent = 'Complex blend — use carefully ⚠';
-    hint.style.color = '#c4914a';
-  }
+  let text, color;
+  if (filled <= 1) { text = 'Strong, clear direction ✓'; color = 'var(--accent)'; }
+  else if (filled === 2) { text = 'Balanced reference'; color = 'var(--text-secondary)'; }
+  else { text = 'Complex blend — use carefully ⚠'; color = '#c4914a'; }
+  // Update all hint elements (both views)
+  document.querySelectorAll('.nb-img-hint, #nb-img-hint').forEach(hint => {
+    hint.textContent = text;
+    hint.style.color = color;
+  });
 }
 
 function showNanobananaFullscreen(imageUrl, imagePath) {
@@ -5000,41 +5002,44 @@ function restorePipelineUI() {
   if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
 }
 
+// ---- Cross-view helpers ----
+function refreshRefImageSlots() {
+  for (let i = 0; i < 3; i++) {
+    document.querySelectorAll(`.ref-img-slot[data-slot="${i}"]`).forEach(slot => {
+      const path = pipelineState.nanobananaReferenceImages[i];
+      if (path) {
+        const safe = `file:///${path.replace(/\\/g, '/')}`;
+        slot.innerHTML = `<img src="${safe}">`;
+        slot.classList.add('filled');
+      } else {
+        slot.innerHTML = '+';
+        slot.classList.remove('filled');
+      }
+    });
+  }
+}
+function _setGenBtns(cls, disabled, label) {
+  document.querySelectorAll(cls).forEach(b => { b.disabled = disabled; b.textContent = label; });
+}
+function _syncPromptFromDom(stage) {
+  // Pull whichever view's textarea has the latest value (input listeners already mirror, but be defensive)
+  const map = { nanobanana: ['nb-prompt', 'nb-prompt-node', 'nanobananaPrompt'],
+                seedance:   ['sd-prompt', 'sd-prompt-node', 'seedancePrompt'],
+                upscale:    ['up-prompt', 'up-prompt-node', 'upscalePrompt'] };
+  const [a, b, key] = map[stage];
+  const ea = document.getElementById(a);
+  const eb = document.getElementById(b);
+  const v = (ea && ea.value) || (eb && eb.value) || pipelineState[key] || '';
+  pipelineState[key] = v.trim();
+  return pipelineState[key];
+}
+
 async function runNanobananaGenerate(scope) {
-  const root = scope || document;
-  const promptEl = root.querySelector('#nb-prompt');
-  if (!promptEl) return;
-  pipelineState.nanobananaPrompt = promptEl.value.trim();
-  if (!pipelineState.nanobananaPrompt) {
+  if (!_syncPromptFromDom('nanobanana')) {
     showToast('Please enter a prompt first.');
     return;
   }
-  const btn = root.querySelector('#nb-generate-btn');
-  const stepBody = root.classList && root.classList.contains('step-card')
-    ? root.querySelector('.step-body')
-    : null;
-  const originalBody = stepBody ? stepBody.innerHTML : null;
-  const restoreForm = () => {
-    if (stepBody && originalBody !== null) {
-      stepBody.innerHTML = originalBody;
-      // Re-wire the just-restored form so the prompt/slots/button work again
-      if (typeof wireStepCardInteractions === 'function' && root.dataset && root.dataset.stepKey) {
-        const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === root.dataset.stepKey);
-        if (stepDef) wireStepCardInteractions(root, stepDef);
-      }
-    } else if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Generate Image →';
-    }
-  };
-  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
-  if (stepBody) {
-    stepBody.innerHTML = `
-      <div style="text-align:center;padding:16px;">
-        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">Generating with Nanobanana...</div>
-        <div style="width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto;"></div>
-      </div>`;
-  }
+  _setGenBtns('.nb-generate-btn', true, 'Generating…');
   try {
     const ratioSelect = document.getElementById('ratio-select');
     const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
@@ -5047,7 +5052,7 @@ async function runNanobananaGenerate(scope) {
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Generation failed. Please try again.');
-      restoreForm();
+      _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
       return;
     }
     const poll = setInterval(async () => {
@@ -5057,40 +5062,34 @@ async function runNanobananaGenerate(scope) {
       } catch (e) {
         clearInterval(poll);
         showToast('Could not check status.');
-        restoreForm();
+        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
         return;
       }
       if (status.status === 'complete') {
         clearInterval(poll);
+        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
         const imageUrl = status.imageUrl || ('file:///' + (status.imagePath || '').replace(/\\/g, '/'));
         const imagePath = status.imagePath || null;
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = 'Generate Image →';
-        }
-        // Render Keep / Regenerate UI; user must explicitly Keep to commit and advance.
         showNanobananaResult(imageUrl, imagePath);
         markSceneModified();
       } else if (status.status === 'error') {
         clearInterval(poll);
         showToast(status.error || 'Generation failed. Please try again.');
-        restoreForm();
+        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
       }
     }, 2000);
   } catch (e) {
     showToast('Something went wrong. Please try again.');
-    restoreForm();
+    _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
   }
 }
 
 async function runSeedanceGenerate(scope) {
-  const root = scope || document;
-  const promptEl = root.querySelector('#sd-prompt');
-  if (!promptEl) return;
-  pipelineState.seedancePrompt = promptEl.value.trim();
-  if (!pipelineState.seedancePrompt) return;
-  const btn = root.querySelector('#sd-generate-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Rendering…'; }
+  if (!_syncPromptFromDom('seedance')) {
+    showToast('Please enter a prompt first.');
+    return;
+  }
+  _setGenBtns('.sd-generate-btn', true, 'Rendering…');
   try {
     const job = await window.electronAPI.aiVideoRender({
       mp4Path: pipelineState.mp4Path,
@@ -5098,35 +5097,31 @@ async function runSeedanceGenerate(scope) {
       referenceFrame: pipelineState.seedanceReferenceImage
     });
     if (!job || !job.success) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+      _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
       return;
     }
     const poll = setInterval(async () => {
       const status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
       if (status.status === 'complete') {
         clearInterval(poll);
-        if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
         const videoUrl = status.videoUrl;
         const videoPath = status.videoPath || status.videoUrl;
-        // Show Keep / Regenerate; user explicitly commits before advancing.
         showSeedanceResult(videoUrl, videoPath);
         markSceneModified();
       } else if (status.status === 'error') {
         clearInterval(poll);
-        if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
       }
     }, 800);
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Generate Video →'; }
+    _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
   }
 }
 
 async function runUpscaleGenerate(scope) {
-  const root = scope || document;
-  const promptEl = root.querySelector('#up-prompt');
-  if (promptEl) pipelineState.upscalePrompt = promptEl.value.trim();
-  const btn = root.querySelector('#up-generate-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Upscaling…'; }
+  _syncPromptFromDom('upscale'); // optional — upscale prompt may be empty
+  _setGenBtns('.up-generate-btn', true, 'Upscaling…');
   try {
     const scale = pipelineState.upscaleResolution === '8k' ? 8 : 4;
     const job = await window.electronAPI.aiUpscale({
@@ -5134,22 +5129,22 @@ async function runUpscaleGenerate(scope) {
       scale
     });
     if (!job || !job.success) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+      _setGenBtns('.up-generate-btn', false, 'Upscale →');
       return;
     }
     const poll = setInterval(async () => {
       const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
       if (status.status === 'complete') {
         clearInterval(poll);
-        if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+        _setGenBtns('.up-generate-btn', false, 'Upscale →');
         pipelineState.upscaleResult = status.outputUrl;
       } else if (status.status === 'error') {
         clearInterval(poll);
-        if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+        _setGenBtns('.up-generate-btn', false, 'Upscale →');
       }
     }, 800);
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Upscale →'; }
+    _setGenBtns('.up-generate-btn', false, 'Upscale →');
   }
 }
 
@@ -5795,8 +5790,8 @@ function drawNodeGrid() {
 
 function updateNodePositions() {
   const s = nodeEditorState.scale;
-  const BASE_SIZE = 160;
-  const scaledSize = BASE_SIZE * s;
+  const BASE_W = 260;
+  const BASE_MIN_H = 200;
 
   Object.keys(nodeBasePositions).forEach(nodeId => {
     const node = document.querySelector(`.node-card[data-node="${nodeId}"]`);
@@ -5806,13 +5801,13 @@ function updateNodePositions() {
 
     node.style.left = screen.x + 'px';
     node.style.top = screen.y + 'px';
-    node.style.width = scaledSize + 'px';
-    node.style.height = scaledSize + 'px';
-    node.style.minHeight = 'unset';
+    node.style.width = (BASE_W * s) + 'px';
+    node.style.height = 'auto';
+    node.style.minHeight = (BASE_MIN_H * s) + 'px';
     node.style.transform = 'none';
     node.style.fontSize = Math.max(8, 11 * s) + 'px';
     node.style.borderRadius = Math.max(3, 8 * s) + 'px';
-    node.style.overflow = 'hidden';
+    node.style.overflow = 'visible';
 
     const titleBar = node.querySelector('.node-title-bar');
     if (titleBar) {
@@ -5822,8 +5817,7 @@ function updateNodePositions() {
 
     const body = node.querySelector('.node-body');
     if (body) {
-      const titleH = titleBar ? titleBar.offsetHeight : Math.max(20, 28 * s);
-      body.style.height = (scaledSize - titleH) + 'px';
+      body.style.height = 'auto';
       body.style.padding = Math.max(2, 6 * s) + 'px';
       body.style.boxSizing = 'border-box';
     }
@@ -6174,47 +6168,180 @@ function buildNodeEditor() {
   const nodePanelEl = document.getElementById('node-panel');
   if (!nodePanelEl) return;
 
-  const nodePromptIds = { nanobanana: 'nb-prompt-node', seedance: 'sd-prompt-node', upscale: 'up-prompt-node' };
-  const nodePlaceholders = {
-    nanobanana: 'Describe camera angle, lighting and style...',
-    seedance:   'Describe the visual tone and style for the video...',
-    upscale:    'Upscale instructions...'
-  };
-  const nodeTplBody = (stage) => `
-    <div class="node-tpl-body">
-      <textarea id="${nodePromptIds[stage]}" class="node-prompt" rows="2" placeholder="${nodePlaceholders[stage]}"></textarea>
-      <button class="template-picker-btn" data-stage="${stage}">⚡ Templates</button>
+  const nodeFrameBody = `
+    <div class="node-content frame-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label">Frame number</div>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <input type="number" id="frame-input-node" class="pipeline-input" min="1" step="1" value="1">
+        <button id="confirm-frame-node" class="pipeline-confirm-btn">✓</button>
+      </div>
+      <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps</div>
+    </div>`;
+
+  const nodeNanobananaBody = `
+    <div class="node-content nanobanana-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Reference Images</span>
+        <span class="nb-img-hint pipeline-hint">Strong direction ✓</span>
+      </div>
+      <div class="nb-ref-images">
+        <div class="ref-img-slot" data-slot="0">+</div>
+        <div class="ref-img-slot" data-slot="1">+</div>
+        <div class="ref-img-slot" data-slot="2">+</div>
+      </div>
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="nanobanana">⚡ Templates</button>
+      </div>
+      <textarea id="nb-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
+      <button class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
+    </div>`;
+
+  const nodeSeedanceBody = `
+    <div class="node-content seedance-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label">Visual Reference</div>
+      <div class="sd-ref-image-area-node sd-ref-image-area">Auto-filled from Nanobanana</div>
+      <button class="sd-override-ref-btn-node sd-override-ref-btn">+ Use different image</button>
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="seedance">⚡ Templates</button>
+      </div>
+      <textarea id="sd-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
+      <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
+    </div>`;
+
+  const nodeUpscaleBody = `
+    <div class="node-content upscale-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="upscale">⚡ Templates</button>
+      </div>
+      <textarea id="up-prompt-node" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
+      <div class="upscale-res-row">
+        <button class="upscale-res-btn-node upscale-res-btn active" data-res="4k">4K</button>
+        <button class="upscale-res-btn-node upscale-res-btn" data-res="8k">8K</button>
+      </div>
+      <button class="pipeline-generate-btn up-generate-btn">Upscale →</button>
     </div>`;
 
   nodePanelEl.innerHTML =
     _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
-    _nodeCardHTML('frame',      'Reference Frame',  'Step 2', true,  true,  '<span style="font-size:9px;color:#555;">Pick a frame in Simple Mode</span>') +
-    _nodeCardHTML('nanobanana', 'Nanobanana',       'Step 3', true,  true,  nodeTplBody('nanobanana')) +
-    _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  nodeTplBody('seedance')) +
-    _nodeCardHTML('upscale',    'Upscale',          'Step 5', true,  false, nodeTplBody('upscale'));
+    _nodeCardHTML('frame',      'Reference Frame',  'Step 2', true,  true,  nodeFrameBody) +
+    _nodeCardHTML('nanobanana', 'Nanobanana',       'Step 3', true,  true,  nodeNanobananaBody) +
+    _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  nodeSeedanceBody) +
+    _nodeCardHTML('upscale',    'Upscale',          'Step 5', true,  false, nodeUpscaleBody);
 
   // Wire node-editor Templates buttons immediately after innerHTML is set
-  const nbNodeTemplateBtn = document.querySelector('.node-card[data-node="nanobanana"] .template-picker-btn');
-  if (nbNodeTemplateBtn) {
-    nbNodeTemplateBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showTemplatePicker('nanobanana', 'nb-prompt-node');
+  const nbNodeCard = document.querySelector('.node-card[data-node="nanobanana"]');
+  const sdNodeCard = document.querySelector('.node-card[data-node="seedance"]');
+  const upNodeCard = document.querySelector('.node-card[data-node="upscale"]');
+  const frameNodeCard = document.querySelector('.node-card[data-node="frame"]');
+
+  nbNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('nanobanana', 'nb-prompt-node');
+  });
+  sdNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('seedance', 'sd-prompt-node');
+  });
+  upNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('upscale', 'up-prompt-node');
+  });
+
+  // Wire ref image slots inside the nanobanana node (uses shared scope-aware function)
+  if (nbNodeCard) wireRefImageSlots(nbNodeCard);
+
+  // Wire Generate buttons
+  nbNodeCard?.querySelector('.nb-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runNanobananaGenerate(nbNodeCard);
+  });
+  sdNodeCard?.querySelector('.sd-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runSeedanceGenerate(sdNodeCard);
+  });
+  upNodeCard?.querySelector('.up-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runUpscaleGenerate(upNodeCard);
+  });
+
+  // Wire Seedance "Use different image" override
+  sdNodeCard?.querySelector('.sd-override-ref-btn-node')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const filePath = await window.electronAPI.openFileDialog({
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     });
-  }
-  const sdNodeTemplateBtn = document.querySelector('.node-card[data-node="seedance"] .template-picker-btn');
-  if (sdNodeTemplateBtn) {
-    sdNodeTemplateBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showTemplatePicker('seedance', 'sd-prompt-node');
+    if (!filePath) return;
+    pipelineState.seedanceReferenceImage = filePath;
+    const safe = `file:///${filePath.replace(/\\/g, '/')}`;
+    document.querySelectorAll('.sd-ref-image-area, .sd-ref-image-area-node, #sd-ref-image-area').forEach(area => {
+      area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
     });
-  }
-  const upNodeTemplateBtn = document.querySelector('.node-card[data-node="upscale"] .template-picker-btn');
-  if (upNodeTemplateBtn) {
-    upNodeTemplateBtn.addEventListener('click', (e) => {
+    markSceneModified();
+  });
+
+  // Wire 4K / 8K buttons
+  upNodeCard?.querySelectorAll('.upscale-res-btn-node').forEach(btn => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      showTemplatePicker('upscale', 'up-prompt-node');
+      upNodeCard.querySelectorAll('.upscale-res-btn-node').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      pipelineState.upscaleResolution = btn.dataset.res;
+      // Mirror state to Simple Mode buttons
+      document.querySelectorAll('.step-card[data-step-key="upscale"] .upscale-res-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.res === btn.dataset.res);
+      });
     });
-  }
+  });
+
+  // Wire frame node confirm button — same logic as Simple Mode
+  frameNodeCard?.querySelector('#confirm-frame-node')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const input = frameNodeCard.querySelector('#frame-input-node');
+    const FPS = 30;
+    const frameNumber = Math.max(1, parseInt(input ? input.value : '1', 10) || 1);
+    const timestampSeconds = (frameNumber - 1) / FPS;
+    pipelineState.referenceFrame = frameNumber;
+    pipelineState.referenceFrameTimestamp = timestampSeconds;
+    if (pipelineState.mp4Path) {
+      const cb = frameNodeCard.querySelector('#confirm-frame-node');
+      if (cb) { cb.disabled = true; cb.textContent = '…'; }
+      try {
+        const result = await window.electronAPI.extractFrame({
+          mp4Path: pipelineState.mp4Path,
+          timestamp: timestampSeconds,
+          saveFolder: localStorage.getItem('refluent_mp4_folder') || null
+        });
+        if (result && result.success && result.framePath) {
+          pipelineState.referenceFrameImage = result.framePath;
+          const imgUrl = 'file:///' + result.framePath.replace(/\\/g, '/');
+          const thumbHTML = `
+            <div style="position:relative;padding:6px;">
+              <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
+              <div style="font-size:9px;color:var(--text-secondary);margin-top:4px;text-align:center;">Frame ${frameNumber}</div>
+            </div>`;
+          const wireThumb = (root) => {
+            const img = root.querySelector('img');
+            if (img) img.addEventListener('click', () => showNanobananaFullscreen(imgUrl, result.framePath));
+          };
+          const sb = document.querySelector('.step-card[data-step-key="frame"] .step-body');
+          if (sb) { sb.innerHTML = thumbHTML; wireThumb(sb); }
+          const nb = document.querySelector('.node-card[data-node="frame"] .node-body');
+          if (nb) { nb.innerHTML = `<div class="node-content">${thumbHTML}</div>`; wireThumb(nb); }
+          updateNanobananaFramePreview();
+          markSceneModified();
+        } else {
+          showToast((result && result.error) || 'Could not extract frame.');
+        }
+      } catch (err) {
+        showToast('Could not extract frame.');
+      }
+      if (cb) { cb.disabled = false; cb.textContent = '✓'; }
+    }
+    advanceFromStep('frame');
+  });
 
   // Two-way sync: typing in a node textarea writes state + mirrors to Simple Mode
   const nodeMirrorSpecs = [
