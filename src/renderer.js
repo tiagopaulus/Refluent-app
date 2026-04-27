@@ -3571,6 +3571,14 @@ async function loadScene(filePath) {
     } else if (obj.type === 'imported' && obj.modelData) {
       try {
         const root = await _loadModelFromBase64(obj.modelData, obj.modelFormat);
+        // Match the import-time centering so the saved wrapper position
+        // (recorded against the centered geometry) aligns the model in
+        // the exact same world location on reload.
+        const box = new THREE.Box3().setFromObject(root);
+        const center = box.getCenter(new THREE.Vector3());
+        root.position.x -= center.x;
+        root.position.y -= center.y;
+        root.position.z -= center.z;
         const wrapper = new THREE.Group();
         wrapper.add(root);
         wrapper.userData.modelData = obj.modelData;
