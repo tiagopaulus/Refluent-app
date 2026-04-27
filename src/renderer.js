@@ -2497,52 +2497,44 @@ function showWalkthrough() {
 }
 
 // ---- Guided Tour ----
-const TOUR_STEPS = [
-  { id: 'add-object',     target: '#add-box-btn',
-    title: 'Add an Object',
-    body:  'Click "Add Box" to place your first 3D object into the scene.',
-    position: 'right', action: 'click' },
-  { id: 'move-object',    target: '.object-popup:not(.hidden)',
-    title: 'Move Your Object',
-    body:  'Use the L/R, U/D and F/B sliders to position your object in the scene.',
-    position: 'left',  action: 'next' },
-  { id: 'scale-object',   target: '.object-popup:not(.hidden)',
-    title: 'Resize Your Object',
-    body:  'Use the scale sliders to make your object bigger or smaller on each axis.',
-    position: 'left',  action: 'next' },
-  { id: 'animate-object', target: '#popup-anim-section',
-    title: 'Animate Your Object',
-    body:  'Choose an animation template — Float, Land, Rotate or Slide In.',
-    position: 'left',  action: 'next' },
-  { id: 'lens',           target: '#lens-select',
-    title: 'Choose a Camera Lens',
-    body:  'Select a professional lens template to define the field of view and visual character.',
-    position: 'bottom', action: 'next' },
-  { id: 'ratio',          target: '#ratio-select',
-    title: 'Set the Output Ratio',
-    body:  'Choose your output aspect ratio — 16:9 for widescreen, 1:1 for social, 9:16 for Reels.',
-    position: 'bottom', action: 'next' },
-  { id: 'camera-motion',  target: '#cam-move-radios',
-    title: 'Choose a Camera Movement',
-    body:  'Select how the camera will move — Push In, Pull Out, Dolly, Pan or Tilt.',
-    position: 'bottom', action: 'next' },
-  { id: 'auto-record',    target: '#rec-with-move-btn',
-    title: 'Enable Auto-Recording',
-    body:  'Turn on Auto-Recording to automatically start recording when you press Play.',
-    position: 'bottom', action: 'next' },
-  { id: 'play',           target: '#cam-play-btn',
-    title: 'Press Play',
-    body:  'Preview or record your camera movement. The viewport will animate the selected motion.',
-    position: 'bottom', action: 'click' },
-  { id: 'stop',           target: '#cam-stop-btn',
-    title: 'Stop the Recording',
-    body:  'Press Stop when you are happy with the take. Your MP4 will be saved automatically.',
-    position: 'bottom', action: 'click' },
-  { id: 'mp4-ready',      target: '.step-card[data-step-key="mp4"]',
-    title: 'Your MP4 is Ready',
-    body:  'Your recording appears here in the timeline. You can now proceed to AI generation.',
-    position: 'top',   action: 'next' }
-];
+function getTourSteps() {
+  const t = (k) => getTranslation(k);
+  return [
+    { id: 'add-object',     target: '#add-box-btn',
+      title: t('tourTitle1'), body: t('tourBody1'),
+      position: 'right', action: 'click' },
+    { id: 'move-object',    target: '.object-popup:not(.hidden)',
+      title: t('tourTitle2'), body: t('tourBody2'),
+      position: 'left',  action: 'next' },
+    { id: 'scale-object',   target: '.object-popup:not(.hidden)',
+      title: t('tourTitle3'), body: t('tourBody3'),
+      position: 'left',  action: 'next' },
+    { id: 'animate-object', target: '#popup-anim-section',
+      title: t('tourTitle4'), body: t('tourBody4'),
+      position: 'left',  action: 'next' },
+    { id: 'lens',           target: '#lens-select',
+      title: t('tourTitle5'), body: t('tourBody5'),
+      position: 'bottom', action: 'next' },
+    { id: 'ratio',          target: '#ratio-select',
+      title: t('tourTitle6'), body: t('tourBody6'),
+      position: 'bottom', action: 'next' },
+    { id: 'camera-motion',  target: '#cam-move-radios',
+      title: t('tourTitle7'), body: t('tourBody7'),
+      position: 'bottom', action: 'next' },
+    { id: 'auto-record',    target: '#rec-with-move-btn',
+      title: t('tourTitle8'), body: t('tourBody8'),
+      position: 'bottom', action: 'next' },
+    { id: 'play',           target: '#cam-play-btn',
+      title: t('tourTitle9'), body: t('tourBody9'),
+      position: 'bottom', action: 'click' },
+    { id: 'stop',           target: '#cam-stop-btn',
+      title: t('tourTitle10'), body: t('tourBody10'),
+      position: 'bottom', action: 'click' },
+    { id: 'mp4-ready',      target: '.step-card[data-step-key="mp4"]',
+      title: t('tourTitle11'), body: t('tourBody11'),
+      position: 'top',   action: 'next' }
+  ];
+}
 
 let tourActive = false;
 let tourStep = 0;
@@ -2580,7 +2572,8 @@ function startTour(fromStep = 0) {
   document.body.appendChild(tooltip);
 
   _tourResizeHandler = () => {
-    const step = TOUR_STEPS[tourStep];
+    const steps = getTourSteps();
+    const step = steps[tourStep];
     if (!step) return;
     const target = document.querySelector(step.target);
     if (target) updateSpotlightAndTooltip(target, step);
@@ -2604,7 +2597,8 @@ function updateSpotlightAndTooltip(target, step) {
 }
 
 function showTourStep(index) {
-  const step = TOUR_STEPS[index];
+  const steps = getTourSteps();
+  const step = steps[index];
   if (!step) { endTour(true); return; }
 
   // Detach previous click-advance handler if any
@@ -2627,17 +2621,20 @@ function showTourStep(index) {
 
   const tooltip = document.getElementById('tour-tooltip');
   tooltip.className = `position-${step.position}`;
-  const isLast = index === TOUR_STEPS.length - 1;
-  const nextLabel = isLast ? 'Finish ✓' : (step.action === 'click' ? 'Click it →' : 'Next →');
+  const isLast = index === steps.length - 1;
+  const nextLabel = isLast
+    ? getTranslation('tourFinish')
+    : (step.action === 'click' ? getTranslation('tourClickIt') : getTranslation('tourNext'));
+  const counter = `${index + 1} ${getTranslation('tourStep')} ${steps.length}`;
   tooltip.innerHTML = `
     <div class="tour-tt-head">
-      <div class="tour-tt-count">${index + 1} / ${TOUR_STEPS.length}</div>
-      <button id="tour-skip" class="tour-tt-skip">Skip tour</button>
+      <div class="tour-tt-count">${counter}</div>
+      <button id="tour-skip" class="tour-tt-skip">${getTranslation('tourSkip')}</button>
     </div>
     <div class="tour-tt-title">${step.title}</div>
     <div class="tour-tt-body">${step.body}</div>
     <div class="tour-tt-actions">
-      ${index > 0 ? '<button id="tour-prev" class="tour-tt-btn tour-tt-btn-ghost">← Back</button>' : ''}
+      ${index > 0 ? `<button id="tour-prev" class="tour-tt-btn tour-tt-btn-ghost">${getTranslation('tourBack')}</button>` : ''}
       <button id="tour-next" class="tour-tt-btn tour-tt-btn-primary">${nextLabel}</button>
     </div>`;
 
