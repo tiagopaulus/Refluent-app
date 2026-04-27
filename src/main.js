@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fluentFfmpeg = require('fluent-ffmpeg');
@@ -352,13 +352,54 @@ ipcMain.handle('ai-video-cancel', async (_event, { jobId }) => {
   try { await videoProvider.cancel(jobId); return { success: true }; }
   catch (err) { return { success: false, error: err.message }; }
 });
-ipcMain.handle('ai-image-generate', async (_event, { prompt, referenceImagePath }) => {
-  try { return { success: true, ...(await imageProvider.generate(prompt, referenceImagePath)) }; }
-  catch (err) { return { success: false, error: err.message }; }
+ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp }) => {
+  if (!mp4Path || !fs.existsSync(mp4Path)) {
+    return { success: false, error: 'MP4 not found.' };
+  }
+  const ts = Math.max(0, parseFloat(timestamp) || 0);
+  const os = require('os');
+  const outPath = path.join(os.tmpdir(), `refluent_frame_${Date.now()}.jpg`);
+  return new Promise((resolve) => {
+    fluentFfmpeg(mp4Path)
+      .seekInput(ts)
+      .frames(1)
+      .outputOptions(['-q:v', '2'])
+      .save(outPath)
+      .on('end', () => resolve({ success: true, framePath: outPath }))
+      .on('error', (err) => {
+        console.error('[ExtractFrame] error:', err && err.message);
+        resolve({ success: false, error: 'Could not extract frame.' });
+      });
+  });
+});
+
+ipcMain.handle('ai-image-generate', async (_event, args) => {
+  try {
+    // Back-compat: legacy callers passed a single `referenceImagePath`.
+    const refs = args.referenceImages || (args.referenceImagePath ? [args.referenceImagePath] : []);
+    return { success: true, ...(await imageProvider.generate(args.prompt, args.referenceFramePath, refs, args.saveFolder || null, args.aspectRatio || '16:9')) };
+  } catch (err) {
+    console.error('[Nanobanana] Error:', err && err.message);
+    return { success: false, error: 'Image generation failed. Please try again.' };
+  }
+});
+
+ipcMain.handle('open-folder', async (_event, folderPath) => {
+  if (!folderPath) return false;
+  try {
+    await shell.openPath(folderPath);
+    return true;
+  } catch (err) {
+    console.error('[open-folder] error:', err && err.message);
+    return false;
+  }
 });
 ipcMain.handle('ai-image-status', async (_event, { jobId }) => {
   try { return { success: true, ...(await imageProvider.checkStatus(jobId)) }; }
-  catch (err) { return { success: false, error: err.message }; }
+  catch (err) {
+    console.error('[Nanobanana] Status error:', err);
+    return { success: false, error: 'Could not check status.' };
+  }
 });
 ipcMain.handle('ai-upscale', async (_event, { inputPath, scale }) => {
   try { return { success: true, ...(await upscaleProvider.upscale(inputPath, scale)) }; }

@@ -38,5 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   confirmQuit: () => ipcRenderer.invoke('confirm-quit'),
   showUnsavedDialog: (sceneName, action) => ipcRenderer.invoke('show-unsaved-dialog', sceneName, action),
   // Guided tour
-  onStartTour: (callback) => ipcRenderer.on('start-tour', () => callback())
+  onStartTour: (callback) => ipcRenderer.on('start-tour', () => callback()),
+  // Pipeline — frame extraction
+  extractFrame: (args) => ipcRenderer.invoke('extract-frame', args),
+  // Open a folder in OS file manager
+  openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath)
 });
