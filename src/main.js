@@ -1,7 +1,33 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs').promises;
 const fluentFfmpeg = require('fluent-ffmpeg');
+
+// Custom scheme for loading local files (images, video, 3D models) without
+// disabling webSecurity. Must be registered as privileged BEFORE app.whenReady().
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'refluent', privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true, bypassCSP: true } }
+]);
+
+// Cross-drive / cross-volume safe move (Windows C:↔D:, mac /tmp↔/Users).
+async function moveFileSafe(src, dest) {
+  try {
+    await fsp.rename(src, dest);
+  } catch (err) {
+    if (err.code === 'EXDEV' || err.code === 'EPERM') {
+      try {
+        await fsp.copyFile(src, dest);
+        await fsp.unlink(src);
+      } catch (copyErr) {
+        try { await fsp.unlink(dest); } catch {}
+        throw copyErr;
+      }
+    } else {
+      throw err;
+    }
+  }
+}
 
 // AI providers - live in main process so they can use node_modules, fs, env
 const { videoProvider } = require('./providers/videoProvider.js');
@@ -75,8 +101,9 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
+        ...(app.isPackaged && process.env.REFLUENT_DEBUG !== '1'
+          ? []
+          : [{ role: 'toggleDevTools' }, { type: 'separator' }]),
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' }
@@ -156,8 +183,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: false
+      contextIsolation: true
     }
   });
 
@@ -214,6 +240,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Map refluent:///<absolute-path> URLs to real files on disk so the renderer
+  // can load user images / video / 3D models without webSecurity:false.
+  protocol.registerFileProtocol('refluent', (request, callback) => {
+    let p = request.url.replace(/^refluent:\/+/, '');
+    p = p.split('?')[0].split('#')[0];
+    try { p = decodeURI(p); } catch {}
+    callback({ path: p });
+  });
+
   buildMenu();
   createSplashWindow();
   createWindow();
@@ -465,109 +500,107 @@ const RATIO_OUTPUT = {
 };
 
 ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration, outputFolder, outputFilename, ratio }) => {
-  return new Promise((resolve, reject) => {
-    try {
-      const tempBasePath = path.join(app.getPath('temp'), `viewport-recording-${Date.now()}`);
-      const tempWebmPath = tempBasePath + '.webm';
-      const tempMp4Path = tempBasePath + '.mp4';
-      
-      const buffer = Buffer.from(arrayBuffer);
-      
-      fs.writeFile(tempWebmPath, buffer, (err) => {
-        if (err) {
-          console.error("Failed to write buffer", err);
-          return resolve({ success: false, message: 'Failed to write chunks to disk' });
-        }
-        
-        try {
-          const webmStats = fs.statSync(tempWebmPath);
-          console.log(`[Main] WebM temp file written successfully. Size: ${webmStats.size} bytes`);
-          if (webmStats.size === 0) {
-            return resolve({ success: false, message: 'Recording may have been too short (0 bytes written).' });
-          }
-        } catch (e) {
-          return resolve({ success: false, message: 'Failed to verify temp webm file.' });
-        }
+  const tempBasePath = path.join(app.getPath('temp'), `viewport-recording-${Date.now()}`);
+  const tempWebmPath = tempBasePath + '.webm';
+  const tempMp4Path = tempBasePath + '.mp4';
+  const safeUnlink = async (p) => { try { await fsp.unlink(p); } catch {} };
 
-        const useRatio = ratio && RATIO_OUTPUT[ratio] ? ratio : '16:9';
-        const cropFilter = RATIO_CROP[useRatio];
-        const out = RATIO_OUTPUT[useRatio];
-        const vfFilter = cropFilter
-          ? `${cropFilter},scale=${out.w}:${out.h}`
-          : `scale=${out.w}:${out.h}`;
-        console.log('[Main] FFmpeg conversion started, ratio=' + useRatio + ', vf=' + vfFilter);
-        event.sender.send('export-progress', 0);
-        fluentFfmpeg(tempWebmPath)
-          .outputOptions([
-            '-y',
-            '-vcodec', 'libx264',
-            '-pix_fmt', 'yuv420p',
-            '-crf', '18',
-            '-preset', 'slow',
-            '-movflags', '+faststart',
-            '-vf', vfFilter
-          ])
-          .save(tempMp4Path)
-          .on('stderr', (stderrLine) => {
-            console.log('[FFmpeg stderr] ' + stderrLine);
-            const match = stderrLine.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-            if (match) {
-              const hours = parseInt(match[1]);
-              const minutes = parseInt(match[2]);
-              const seconds = parseFloat(match[3]);
-              const current = hours * 3600 + minutes * 60 + seconds;
-              const percent = Math.min((current / duration) * 100, 100);
-              event.sender.send('export-progress', percent);
-            }
-          })
-          .on('end', async () => {
-            console.log('[Main] FFmpeg conversion finished');
-            event.sender.send('export-progress', 100);
-            if (fs.existsSync(tempWebmPath)) fs.unlinkSync(tempWebmPath);
-            
-            try {
-               const stats = fs.statSync(tempMp4Path);
-               if (stats.size === 0) {
-                 if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
-                 return resolve({ success: false, message: 'FFmpeg generated a 0-byte unplayable file. Conversion failed.' });
-               }
-            } catch (e) {
-               return resolve({ success: false, message: 'Failed to find exported MP4.' });
-            }
+  try {
+    await fsp.writeFile(tempWebmPath, Buffer.from(arrayBuffer));
+  } catch (err) {
+    console.error('Failed to write buffer', err);
+    return { success: false, message: 'Failed to write chunks to disk' };
+  }
 
-            let outputMp4Path;
-            if (outputFolder && outputFilename) {
-              outputMp4Path = path.join(outputFolder, outputFilename);
-            } else {
-              const saveResult = await dialog.showSaveDialog({
-                title: 'Save MP4 Recording',
-                defaultPath: path.join(app.getPath('documents'), 'viewport-recording.mp4'),
-                filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
-              });
-
-              if (saveResult.canceled) {
-                if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
-                return resolve({ success: false, message: 'Canceled by user' });
-              }
-              outputMp4Path = saveResult.filePath;
-            }
-
-            try {
-              fs.renameSync(tempMp4Path, outputMp4Path);
-            } catch (renameErr) {
-              if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
-              return resolve({ success: false, message: 'Failed to write MP4 to folder: ' + renameErr.message });
-            }
-            resolve({ success: true, filePath: outputMp4Path });
-          })
-          .on('error', (err) => {
-            if (fs.existsSync(tempWebmPath)) fs.unlinkSync(tempWebmPath);
-            if (fs.existsSync(tempMp4Path)) fs.unlinkSync(tempMp4Path);
-            resolve({ success: false, message: err.message });
-          });
-      });
-    } catch (error) {
-      return resolve({ success: false, message: error.message });
+  try {
+    const webmStats = await fsp.stat(tempWebmPath);
+    console.log(`[Main] WebM temp file written successfully. Size: ${webmStats.size} bytes`);
+    if (webmStats.size === 0) {
+      await safeUnlink(tempWebmPath);
+      return { success: false, message: 'Recording may have been too short (0 bytes written).' };
     }
-  });
+  } catch (e) {
+    return { success: false, message: 'Failed to verify temp webm file.' };
+  }
+
+  const useRatio = ratio && RATIO_OUTPUT[ratio] ? ratio : '16:9';
+  const cropFilter = RATIO_CROP[useRatio];
+  const out = RATIO_OUTPUT[useRatio];
+  const vfFilter = cropFilter
+    ? `${cropFilter},scale=${out.w}:${out.h}`
+    : `scale=${out.w}:${out.h}`;
+  console.log('[Main] FFmpeg conversion started, ratio=' + useRatio + ', vf=' + vfFilter);
+  event.sender.send('export-progress', 0);
+
+  try {
+    await new Promise((resolve, reject) => {
+      fluentFfmpeg(tempWebmPath)
+        .outputOptions([
+          '-y',
+          '-vcodec', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-crf', '18',
+          '-preset', 'slow',
+          '-movflags', '+faststart',
+          '-vf', vfFilter
+        ])
+        .save(tempMp4Path)
+        .on('stderr', (stderrLine) => {
+          console.log('[FFmpeg stderr] ' + stderrLine);
+          const match = stderrLine.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+          if (match) {
+            const hours = parseInt(match[1]);
+            const minutes = parseInt(match[2]);
+            const seconds = parseFloat(match[3]);
+            const current = hours * 3600 + minutes * 60 + seconds;
+            const percent = Math.min((current / duration) * 100, 100);
+            event.sender.send('export-progress', percent);
+          }
+        })
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+  } catch (err) {
+    await safeUnlink(tempWebmPath);
+    await safeUnlink(tempMp4Path);
+    return { success: false, message: err.message };
+  }
+
+  console.log('[Main] FFmpeg conversion finished');
+  event.sender.send('export-progress', 100);
+  await safeUnlink(tempWebmPath);
+
+  try {
+    const stats = await fsp.stat(tempMp4Path);
+    if (stats.size === 0) {
+      await safeUnlink(tempMp4Path);
+      return { success: false, message: 'FFmpeg generated a 0-byte unplayable file. Conversion failed.' };
+    }
+  } catch (e) {
+    return { success: false, message: 'Failed to find exported MP4.' };
+  }
+
+  let outputMp4Path;
+  if (outputFolder && outputFilename) {
+    outputMp4Path = path.join(outputFolder, outputFilename);
+  } else {
+    const saveResult = await dialog.showSaveDialog({
+      title: 'Save MP4 Recording',
+      defaultPath: path.join(app.getPath('documents'), 'viewport-recording.mp4'),
+      filters: [{ name: 'MP4 Video', extensions: ['mp4'] }]
+    });
+    if (saveResult.canceled) {
+      await safeUnlink(tempMp4Path);
+      return { success: false, message: 'Canceled by user' };
+    }
+    outputMp4Path = saveResult.filePath;
+  }
+
+  try {
+    await moveFileSafe(tempMp4Path, outputMp4Path);
+  } catch (renameErr) {
+    await safeUnlink(tempMp4Path);
+    return { success: false, message: 'Failed to write MP4 to folder: ' + renameErr.message };
+  }
+  return { success: true, filePath: outputMp4Path };
 });

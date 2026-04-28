@@ -1506,7 +1506,7 @@ async function loadModelFile(filePath, ext, nameWithoutExt) {
   loadingOverlay.classList.remove('hidden');
   loadingText.innerText = getTranslation('loadingModel');
 
-  const fileUrl = encodeURI(`file:///${filePath.replace(/\\/g, '/')}`);
+  const fileUrl = _toFileUrl(filePath);
 
   let modelDataB64 = null;
   try {
@@ -1709,13 +1709,13 @@ recordBtn.addEventListener('click', async () => {
 
   const userObjects = scene.children.filter(c => c.userData.isUserObject);
   if (userObjects.length === 0) {
-    alert(getTranslation('noObjectsWarning'));
+    showToast(getTranslation('noObjectsWarning'));
     return;
   }
 
   const folder = await ensureMp4Folder();
   if (!folder) {
-    alert(_missingFolderMessage());
+    showToast(_missingFolderMessage());
     return;
   }
   
@@ -1753,7 +1753,7 @@ recordBtn.addEventListener('click', async () => {
   } catch (e) {
     console.error('MediaRecorder not supported', e);
     _restoreRecordingHelpers();
-    alert(getTranslation('mediaRecNotSupported'));
+    showToast(getTranslation('mediaRecNotSupported'));
     return;
   }
 
@@ -1804,7 +1804,7 @@ recordBtn.addEventListener('click', async () => {
       activateStep('frame');
     } else {
       if (result.message !== 'Canceled by user') {
-        alert(getTranslation('exportFailed') + result.message);
+        showToast(getTranslation('exportFailed') + result.message);
       }
     }
   };
@@ -1831,7 +1831,7 @@ stopBtn.addEventListener('click', () => {
   }
 
   if (Date.now() - recordingStartTime < 1000) {
-    alert(getTranslation('recordingTooShort'));
+    showToast(getTranslation('recordingTooShort'));
     recordedChunks = [];
     if (mediaRecorder.state !== 'inactive') {
       mediaRecorder.onstop = null;
@@ -4331,9 +4331,7 @@ function onNanobananaComplete(imagePath) {
   pipelineState.seedanceReferenceImage = imagePath;
   const refArea = document.getElementById('sd-ref-image-area');
   if (refArea && imagePath) {
-    const imgUrl = imagePath.startsWith('file:')
-      ? imagePath
-      : 'file:///' + imagePath.replace(/\\/g, '/');
+    const imgUrl = _toFileUrl(imagePath);
     refArea.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
   }
   advanceFromStep('nanobanana');
@@ -4529,8 +4527,12 @@ function toggleSkipStep(stepId) {
 
 function _toFileUrl(p) {
   if (!p) return '';
-  if (p.startsWith('file:')) return p;
-  return 'file:///' + p.replace(/\\/g, '/');
+  if (p.startsWith('refluent:')) return p;
+  // Migrate legacy file:/// values from older saves
+  if (p.startsWith('file:')) {
+    try { p = decodeURI(p.replace(/^file:\/+/, '')); } catch { p = p.replace(/^file:\/+/, ''); }
+  }
+  return 'refluent:///' + p.replace(/\\/g, '/');
 }
 
 function _buildMp4ThumbnailHTML(filename, mp4Url) {
@@ -5002,11 +5004,7 @@ function restorePipelineUI() {
   // Idempotent — passes through values already in `file://` form,
   // wraps raw Windows paths once. Guards against double-prefix bugs from
   // older saves where pipelineState fields were stored as URLs.
-  const fileUrl = (p) => {
-    if (!p) return null;
-    if (p.startsWith('file:')) return p;
-    return 'file:///' + p.replace(/\\/g, '/');
-  };
+  const fileUrl = (p) => p ? _toFileUrl(p) : null;
 
   // MP4 card — video thumbnail with play overlay + click-to-fullscreen
   if (pipelineState.mp4Path) {
@@ -5131,7 +5129,7 @@ function refreshRefImageSlots() {
     document.querySelectorAll(`.ref-img-slot[data-slot="${i}"]`).forEach(slot => {
       const path = pipelineState.nanobananaReferenceImages[i];
       if (path) {
-        const safe = `file:///${path.replace(/\\/g, '/')}`;
+        const safe = _toFileUrl(path);
         slot.innerHTML = `<img src="${safe}">`;
         slot.classList.add('filled');
       } else {
@@ -5157,11 +5155,43 @@ function _syncPromptFromDom(stage) {
   return pipelineState[key];
 }
 
+// In-flight guards + poll handles for the three AI pipeline stages. Prevents
+// duplicate jobs from rapid double-clicks or simultaneous Simple+Node clicks
+// and ensures pollers never outlive the window.
+let nanobananaInFlight = false;
+let seedanceInFlight = false;
+let upscaleInFlight = false;
+let nanobananaPoller = null;
+let seedancePoller = null;
+let upscalePoller = null;
+const AI_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+function _stopNanobananaPoller() {
+  if (nanobananaPoller) { clearInterval(nanobananaPoller); nanobananaPoller = null; }
+  nanobananaInFlight = false;
+}
+function _stopSeedancePoller() {
+  if (seedancePoller) { clearInterval(seedancePoller); seedancePoller = null; }
+  seedanceInFlight = false;
+}
+function _stopUpscalePoller() {
+  if (upscalePoller) { clearInterval(upscalePoller); upscalePoller = null; }
+  upscaleInFlight = false;
+}
+
+window.addEventListener('beforeunload', () => {
+  _stopNanobananaPoller();
+  _stopSeedancePoller();
+  _stopUpscalePoller();
+});
+
 async function runNanobananaGenerate(scope) {
+  if (nanobananaInFlight) return;
   if (!_syncPromptFromDom('nanobanana')) {
     showToast('Please enter a prompt first.');
     return;
   }
+  nanobananaInFlight = true;
   _setGenBtns('.nb-generate-btn', true, 'Generating…');
   try {
     const ratioSelect = document.getElementById('ratio-select');
@@ -5176,27 +5206,36 @@ async function runNanobananaGenerate(scope) {
     if (!job || !job.success) {
       showToast((job && job.error) || 'Generation failed. Please try again.');
       _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+      _stopNanobananaPoller();
       return;
     }
-    const poll = setInterval(async () => {
+    if (nanobananaPoller) clearInterval(nanobananaPoller);
+    const startedAt = Date.now();
+    nanobananaPoller = setInterval(async () => {
+      if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
+        _stopNanobananaPoller();
+        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+        showToast('Image generation is taking too long. Please try again.');
+        return;
+      }
       let status;
       try {
         status = await window.electronAPI.aiImageStatus({ jobId: job.jobId });
       } catch (e) {
-        clearInterval(poll);
+        _stopNanobananaPoller();
         showToast('Could not check status.');
         _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
         return;
       }
       if (status.status === 'complete') {
-        clearInterval(poll);
+        _stopNanobananaPoller();
         _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
-        const imageUrl = status.imageUrl || ('file:///' + (status.imagePath || '').replace(/\\/g, '/'));
+        const imageUrl = status.imageUrl || _toFileUrl(status.imagePath || '');
         const imagePath = status.imagePath || null;
         showNanobananaResult(imageUrl, imagePath);
         markSceneModified();
       } else if (status.status === 'error') {
-        clearInterval(poll);
+        _stopNanobananaPoller();
         showToast(status.error || 'Generation failed. Please try again.');
         _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
       }
@@ -5204,14 +5243,17 @@ async function runNanobananaGenerate(scope) {
   } catch (e) {
     showToast('Something went wrong. Please try again.');
     _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+    _stopNanobananaPoller();
   }
 }
 
 async function runSeedanceGenerate(scope) {
+  if (seedanceInFlight) return;
   if (!_syncPromptFromDom('seedance')) {
     showToast('Please enter a prompt first.');
     return;
   }
+  seedanceInFlight = true;
   _setGenBtns('.sd-generate-btn', true, 'Rendering…');
   try {
     const job = await window.electronAPI.aiVideoRender({
@@ -5220,30 +5262,52 @@ async function runSeedanceGenerate(scope) {
       referenceFrame: pipelineState.seedanceReferenceImage
     });
     if (!job || !job.success) {
+      showToast((job && job.error) || 'Render failed. Please try again.');
       _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+      _stopSeedancePoller();
       return;
     }
-    const poll = setInterval(async () => {
-      const status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
+    if (seedancePoller) clearInterval(seedancePoller);
+    const startedAt = Date.now();
+    seedancePoller = setInterval(async () => {
+      if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
+        _stopSeedancePoller();
+        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        showToast('Seedance is taking too long. Please try again.');
+        return;
+      }
+      let status;
+      try {
+        status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
+      } catch (e) {
+        _stopSeedancePoller();
+        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        showToast('Could not check Seedance status. Please try again.');
+        return;
+      }
       if (status.status === 'complete') {
-        clearInterval(poll);
+        _stopSeedancePoller();
         _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
         const videoUrl = status.videoUrl;
         const videoPath = status.videoPath || status.videoUrl;
         showSeedanceResult(videoUrl, videoPath);
         markSceneModified();
       } else if (status.status === 'error') {
-        clearInterval(poll);
+        _stopSeedancePoller();
+        showToast(status.error || 'Seedance render failed. Please try again.');
         _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
       }
     }, 800);
   } catch (e) {
     _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+    _stopSeedancePoller();
   }
 }
 
 async function runUpscaleGenerate(scope) {
+  if (upscaleInFlight) return;
   _syncPromptFromDom('upscale'); // optional — upscale prompt may be empty
+  upscaleInFlight = true;
   _setGenBtns('.up-generate-btn', true, 'Upscaling…');
   try {
     const scale = pipelineState.upscaleResolution === '8k' ? 8 : 4;
@@ -5252,28 +5316,48 @@ async function runUpscaleGenerate(scope) {
       scale
     });
     if (!job || !job.success) {
+      showToast((job && job.error) || 'Upscale failed. Please try again.');
       _setGenBtns('.up-generate-btn', false, 'Upscale →');
+      _stopUpscalePoller();
       return;
     }
-    const poll = setInterval(async () => {
-      const status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
+    if (upscalePoller) clearInterval(upscalePoller);
+    const startedAt = Date.now();
+    upscalePoller = setInterval(async () => {
+      if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
+        _stopUpscalePoller();
+        _setGenBtns('.up-generate-btn', false, 'Upscale →');
+        showToast('Upscale is taking too long. Please try again.');
+        return;
+      }
+      let status;
+      try {
+        status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
+      } catch (e) {
+        _stopUpscalePoller();
+        _setGenBtns('.up-generate-btn', false, 'Upscale →');
+        showToast('Could not check upscale status. Please try again.');
+        return;
+      }
       if (status.status === 'complete') {
-        clearInterval(poll);
+        _stopUpscalePoller();
         _setGenBtns('.up-generate-btn', false, 'Upscale →');
         pipelineState.upscaleResult = status.outputUrl;
       } else if (status.status === 'error') {
-        clearInterval(poll);
+        _stopUpscalePoller();
+        showToast(status.error || 'Upscale failed. Please try again.');
         _setGenBtns('.up-generate-btn', false, 'Upscale →');
       }
     }, 800);
   } catch (e) {
     _setGenBtns('.up-generate-btn', false, 'Upscale →');
+    _stopUpscalePoller();
   }
 }
 
 function updateNanobananaFramePreview() {
   if (!pipelineState.referenceFrameImage) return;
-  const imgUrl = 'file:///' + pipelineState.referenceFrameImage.replace(/\\/g, '/');
+  const imgUrl = _toFileUrl(pipelineState.referenceFrameImage);
   const previewHTML = `
     <div style="font-size:9px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">
       Input Frame
@@ -5455,7 +5539,7 @@ function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
         if (!imgPath) return;
         const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
         if (slot) {
-          const refUrl = 'file:///' + imgPath.replace(/\\/g, '/');
+          const refUrl = _toFileUrl(imgPath);
           slot.innerHTML = `<img src="${refUrl}">`;
           slot.classList.add('filled');
         }
@@ -5533,7 +5617,7 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
       if (savedRef) {
         const sdRefArea = document.getElementById('sd-ref-image-area');
         if (sdRefArea) {
-          const refUrl = 'file:///' + savedRef.replace(/\\/g, '/');
+          const refUrl = _toFileUrl(savedRef);
           sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
         }
       }
@@ -5580,7 +5664,7 @@ function wireStepCardInteractions(card, step) {
           });
           if (result && result.success && result.framePath) {
             pipelineState.referenceFrameImage = result.framePath;
-            const imgUrl = 'file:///' + result.framePath.replace(/\\/g, '/');
+            const imgUrl = _toFileUrl(result.framePath);
             const frameThumbHTML = `
                 <div style="position:relative;padding:6px;">
                   <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
@@ -5645,7 +5729,7 @@ function wireStepCardInteractions(card, step) {
       pipelineState.seedanceReferenceImage = filePath;
       const area = card.querySelector('#sd-ref-image-area');
       if (area) {
-        const safe = `file:///${filePath.replace(/\\/g, '/')}`;
+        const safe = _toFileUrl(filePath);
         area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
       }
     });
@@ -6259,7 +6343,7 @@ function updateNodeMediaPreviews() {
   if (pipelineState.mp4Path) {
     const mp4Content = document.querySelector('.node-card[data-node="mp4"] .node-content');
     if (mp4Content && !mp4Content.querySelector('input, textarea, button')) {
-      const safeUrl = `file:///${pipelineState.mp4Path.replace(/\\/g, '/')}`;
+      const safeUrl = _toFileUrl(pipelineState.mp4Path);
       mp4Content.innerHTML = `
         <div class="node-media-preview">
           <video src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;" preload="metadata" muted playsinline></video>
@@ -6398,7 +6482,7 @@ function buildNodeEditor() {
     });
     if (!filePath) return;
     pipelineState.seedanceReferenceImage = filePath;
-    const safe = `file:///${filePath.replace(/\\/g, '/')}`;
+    const safe = _toFileUrl(filePath);
     document.querySelectorAll('.sd-ref-image-area, .sd-ref-image-area-node, #sd-ref-image-area').forEach(area => {
       area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
     });
@@ -6439,7 +6523,7 @@ function buildNodeEditor() {
         });
         if (result && result.success && result.framePath) {
           pipelineState.referenceFrameImage = result.framePath;
-          const imgUrl = 'file:///' + result.framePath.replace(/\\/g, '/');
+          const imgUrl = _toFileUrl(result.framePath);
           const thumbHTML = `
             <div style="position:relative;padding:6px;">
               <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
