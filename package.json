@@ -1,6 +1,6 @@
 {
   "name": "refluent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Desktop 3D Viewport Reference Tool",
   "main": "src/main.js",
   "scripts": {
@@ -32,14 +32,7 @@
     "icon": "assets/icon_with_bg.png",
     "asar": true,
     "asarUnpack": [
-      "**/node_modules/ffmpeg-static/**/*",
-      "src/lib/**/*",
-      "src/index.html",
-      "src/renderer.js",
-      "src/i18n.js",
-      "src/style.css",
-      "src/splash.html",
-      "src/splash-video.mp4"
+      "**/node_modules/ffmpeg-static/**/*"
     ],
     "files": [
       "src/**/*",
@@ -49,8 +42,8 @@
     ],
     "extraResources": [
       {
-        "from": "assets/",
-        "to": "assets/"
+        "from": ".env.production",
+        "to": ".env"
       }
     ],
     "win": {
@@ -75,7 +68,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Refluent",
-      "language": "1042",
+      "language": "1033",
       "multiLanguageInstaller": true,
       "installerLanguages": [
         "en_US",

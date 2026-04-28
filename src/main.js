@@ -6,8 +6,21 @@ const fluentFfmpeg = require('fluent-ffmpeg');
 
 // Custom scheme for loading local files (images, video, 3D models) without
 // disabling webSecurity. Must be registered as privileged BEFORE app.whenReady().
+// `standard: false` keeps refluent: out of Chromium's special URL parser, which
+// would otherwise mangle URLs that have a Windows drive letter after the
+// authority. We use a fake host segment ("local") so the URL has the form
+// refluent://local/<path>, which any URL parser is happy with.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'refluent', privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true, bypassCSP: true } }
+  {
+    scheme: 'refluent',
+    privileges: {
+      secure: true,
+      standard: false,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true
+    }
+  }
 ]);
 
 // Cross-drive / cross-volume safe move (Windows C:↔D:, mac /tmp↔/Users).
@@ -240,13 +253,29 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  // Map refluent:///<absolute-path> URLs to real files on disk so the renderer
-  // can load user images / video / 3D models without webSecurity:false.
+  // Map refluent://local/<absolute-path> URLs to real files on disk so the
+  // renderer can load user images / video / 3D models without webSecurity:false.
   protocol.registerFileProtocol('refluent', (request, callback) => {
-    let p = request.url.replace(/^refluent:\/+/, '');
-    p = p.split('?')[0].split('#')[0];
-    try { p = decodeURI(p); } catch {}
-    callback({ path: p });
+    try {
+      // Strip scheme and fake host: refluent://local/C:/path → C:/path
+      let p = request.url
+        .replace(/^refluent:\/\/local\//, '')
+        .replace(/^refluent:\/+/, '');
+      // Strip query and fragment
+      p = p.split('?')[0].split('#')[0];
+      // Decode percent-encoding (handles spaces and other encoded chars)
+      try { p = decodeURI(p); } catch {}
+      // Restore drive-letter colon if it came in encoded (e.g. C%3A → C:)
+      p = p.replace(/^([A-Za-z])%3A/, '$1:');
+      // Use OS-native separators (Node fs accepts both, but this is cleaner)
+      if (process.platform === 'win32') {
+        p = p.replace(/\//g, '\\');
+      }
+      callback({ path: p });
+    } catch (err) {
+      console.error('[refluent://] protocol error:', err);
+      callback({ error: -2 }); // NET::ERR_FAILED
+    }
   });
 
   buildMenu();
@@ -391,7 +420,11 @@ ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp, saveFolder 
   if (!mp4Path || !fs.existsSync(mp4Path)) {
     return { success: false, error: 'MP4 not found.' };
   }
-  const ts = Math.max(0, parseFloat(timestamp) || 0);
+  // Skip encoder warmup — the first ~3 frames of any WebM/MP4 produced by
+  // MediaRecorder are at lower quality while the encoder ramps up. Clamp
+  // the seek to 0.1s minimum so we never extract from the warmup region.
+  const MIN_OFFSET = 0.1;
+  const ts = Math.max(MIN_OFFSET, parseFloat(timestamp) || 0);
   const os = require('os');
 
   // If a save folder is set, auto-increment Refluent_Frame_001.jpg, _002.jpg, …
@@ -413,7 +446,10 @@ ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp, saveFolder 
     fluentFfmpeg(mp4Path)
       .seekInput(ts)
       .frames(1)
-      .outputOptions(['-q:v', '2'])
+      // -q:v 1 = highest JPG quality (was 2). The MP4 is already at the chosen
+      // output resolution, so we don't add a scale filter — that would distort
+      // anything other than 16:9 ratios.
+      .outputOptions(['-q:v', '1'])
       .save(outPath)
       .on('end', () => resolve({ success: true, framePath: outPath }))
       .on('error', (err) => {
@@ -483,14 +519,9 @@ ipcMain.handle('dialog:openModel', async () => {
 });
 
 // IPC Handler: Convert WebM to MP4
-// Aspect-ratio aware ffmpeg filters
-const RATIO_CROP = {
-  '16:9': null,
-  '1:1':  'crop=ih:ih',
-  '4:5':  'crop=ih*(4/5):ih',
-  '3:4':  'crop=ih*(3/4):ih',
-  '9:16': 'crop=ih*(9/16):ih'
-};
+// The renderer now resizes its GL buffer to these exact dimensions before
+// captureStream(), so the WebM arrives already at the final aspect — ffmpeg
+// only needs to enforce the resolution (lanczos for higher-quality scaling).
 const RATIO_OUTPUT = {
   '16:9': { w: 1920, h: 1080 },
   '1:1':  { w: 1080, h: 1080 },
@@ -524,11 +555,11 @@ ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration,
   }
 
   const useRatio = ratio && RATIO_OUTPUT[ratio] ? ratio : '16:9';
-  const cropFilter = RATIO_CROP[useRatio];
   const out = RATIO_OUTPUT[useRatio];
-  const vfFilter = cropFilter
-    ? `${cropFilter},scale=${out.w}:${out.h}`
-    : `scale=${out.w}:${out.h}`;
+  // The renderer pre-resizes its GL buffer to these exact dimensions before
+  // captureStream(), so the WebM is already at the final aspect. Just enforce
+  // the resolution with high-quality lanczos scaling — no crop, no padding.
+  const vfFilter = `scale=${out.w}:${out.h}:flags=lanczos`;
   console.log('[Main] FFmpeg conversion started, ratio=' + useRatio + ', vf=' + vfFilter);
   event.sender.send('export-progress', 0);
 

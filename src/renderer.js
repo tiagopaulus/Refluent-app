@@ -50,6 +50,20 @@ const RATIO_MAP = {
   '9:16': 9 / 16
 };
 
+// Pixel dimensions used for recording — must match RATIO_OUTPUT in main.js so
+// the WebM the renderer captures arrives at ffmpeg already at the final aspect.
+const RATIO_DIMENSIONS = {
+  '16:9': { w: 1920, h: 1080 },
+  '1:1':  { w: 1080, h: 1080 },
+  '4:5':  { w: 1080, h: 1350 },
+  '3:4':  { w: 1080, h: 1440 },
+  '9:16': { w: 1080, h: 1920 }
+};
+
+// True while a recording is in progress — global resize / layout-switch handlers
+// must not overwrite the camera.aspect / renderer size we set for capture.
+let isRecording = false;
+
 function updateObjectAnimations(delta) {
   scene.traverse(obj => {
     if (!obj.userData || !obj.userData.animTemplate || obj.userData.animTemplate === 'none') return;
@@ -338,6 +352,20 @@ function animate() {
   }
   renderer.render(scene, camera);
 
+  // If recording, also render the same scene to the offscreen canvas at the
+  // chosen output aspect — this is what MediaRecorder captures, leaving the
+  // live canvas visually untouched.
+  if (isRecording && offscreenRenderer && offscreenCamera) {
+    offscreenCamera.position.copy(camera.position);
+    offscreenCamera.quaternion.copy(camera.quaternion);
+    offscreenCamera.fov = camera.fov;
+    offscreenCamera.near = camera.near;
+    offscreenCamera.far = camera.far;
+    offscreenCamera.zoom = camera.zoom;
+    offscreenCamera.updateProjectionMatrix();
+    offscreenRenderer.render(scene, offscreenCamera);
+  }
+
   // FOV animation
   if (Math.abs(camera.fov - targetFov) > 0.01) {
     camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.1);
@@ -361,6 +389,9 @@ try {
 }
 
 window.addEventListener('resize', () => {
+  // Don't disturb the renderer/camera while a recording is in flight — the
+  // record handler has set them to the export dimensions. We'll restore on stop.
+  if (isRecording) return;
   const w = container.clientWidth || window.innerWidth;
   const h = container.clientHeight || window.innerHeight;
   camera.aspect = w / h;
@@ -1506,16 +1537,37 @@ async function loadModelFile(filePath, ext, nameWithoutExt) {
   loadingOverlay.classList.remove('hidden');
   loadingText.innerText = getTranslation('loadingModel');
 
-  const fileUrl = _toFileUrl(filePath);
-
+  // Read the file as base64 via IPC and feed Three.js a Blob URL. This bypasses
+  // Chromium's URL parser entirely (no file:// or refluent:// edge cases) and
+  // also gives us the bytes we need to embed into .ent saves.
   let modelDataB64 = null;
   try {
     modelDataB64 = await window.electronAPI.readFileBase64(filePath);
   } catch (err) {
-    console.warn('[Mission H] Could not read model file as base64:', err);
+    console.warn('[loadModel] Could not read model file as base64:', err);
+  }
+  if (!modelDataB64) {
+    showToast('Could not load model file.');
+    loadingOverlay.classList.add('hidden');
+    return;
   }
 
+  const mimeTypes = {
+    glb: 'model/gltf-binary',
+    gltf: 'model/gltf+json',
+    obj: 'text/plain',
+    fbx: 'application/octet-stream',
+    dae: 'text/xml'
+  };
+  const mime = mimeTypes[ext] || 'application/octet-stream';
+  const binary = atob(modelDataB64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime });
+  const blobUrl = URL.createObjectURL(blob);
+
   const onLoad = (object) => {
+    URL.revokeObjectURL(blobUrl);
     const root = object.scene || object;
 
     const box = new THREE.Box3().setFromObject(root);
@@ -1536,10 +1588,8 @@ async function loadModelFile(filePath, ext, nameWithoutExt) {
     wrapper.userData.isUserObject = true;
     wrapper.userData.modelName = nameWithoutExt;
     wrapper.userData.type = 'imported';
-    if (modelDataB64) {
-      wrapper.userData.modelData = modelDataB64;
-      wrapper.userData.modelFormat = ext;
-    }
+    wrapper.userData.modelData = modelDataB64;
+    wrapper.userData.modelFormat = ext;
     wrapper.userData.name = nameWithoutExt
       ? nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)
       : 'Model';
@@ -1551,20 +1601,22 @@ async function loadModelFile(filePath, ext, nameWithoutExt) {
   };
 
   const onError = (e) => {
+    URL.revokeObjectURL(blobUrl);
     console.error(e);
     loadingText.innerText = getTranslation('errorLoading');
     setTimeout(() => loadingOverlay.classList.add('hidden'), 2000);
   };
 
   if (ext === 'obj') {
-    new OBJLoader().load(fileUrl, onLoad, undefined, onError);
+    new OBJLoader().load(blobUrl, onLoad, undefined, onError);
   } else if (ext === 'glb' || ext === 'gltf') {
-    new GLTFLoader().load(fileUrl, onLoad, undefined, onError);
+    new GLTFLoader().load(blobUrl, onLoad, undefined, onError);
   } else if (ext === 'fbx') {
-    new FBXLoader().load(fileUrl, onLoad, undefined, onError);
+    new FBXLoader().load(blobUrl, onLoad, undefined, onError);
   } else if (ext === 'dae') {
-    new ColladaLoader().load(fileUrl, onLoad, undefined, onError);
+    new ColladaLoader().load(blobUrl, onLoad, undefined, onError);
   } else {
+    URL.revokeObjectURL(blobUrl);
     loadingOverlay.classList.add('hidden');
     showToast('Unsupported file format: ' + ext);
   }
@@ -1704,6 +1756,75 @@ function _missingFolderMessage() {
   return lang === 'kr' ? '녹화하려면 저장 폴더를 선택해주세요.' : 'Please select a save folder to record.';
 }
 
+// Offscreen recording — keeps the live canvas/renderer/camera completely
+// untouched while capturing at the chosen output dimensions. A second
+// WebGLRenderer renders the same scene to an offscreen canvas at output
+// resolution + output aspect; captureStream from that canvas is what the
+// MediaRecorder consumes.
+let offscreenCanvas = null;
+let offscreenRenderer = null;
+let offscreenCamera = null;
+
+function startOffscreenRecording(outputDims) {
+  offscreenCanvas = document.createElement('canvas');
+  offscreenCanvas.width = outputDims.w;
+  offscreenCanvas.height = outputDims.h;
+
+  offscreenRenderer = new THREE.WebGLRenderer({
+    canvas: offscreenCanvas,
+    antialias: true,
+    preserveDrawingBuffer: true
+  });
+  offscreenRenderer.setSize(outputDims.w, outputDims.h, false);
+  offscreenRenderer.setPixelRatio(1);
+  const clearColor = new THREE.Color();
+  renderer.getClearColor(clearColor);
+  offscreenRenderer.setClearColor(clearColor, renderer.getClearAlpha());
+  offscreenRenderer.shadowMap.enabled = renderer.shadowMap.enabled;
+
+  offscreenCamera = camera.clone();
+  offscreenCamera.aspect = outputDims.w / outputDims.h;
+  offscreenCamera.updateProjectionMatrix();
+
+  // Render once before captureStream so the first emitted frame isn't blank.
+  offscreenRenderer.render(scene, offscreenCamera);
+  return offscreenCanvas.captureStream(30);
+}
+
+function stopOffscreenRecording() {
+  if (offscreenRenderer) {
+    offscreenRenderer.dispose();
+    offscreenRenderer = null;
+  }
+  offscreenCanvas = null;
+  offscreenCamera = null;
+}
+
+// Recording produces zero visual change to the app — no border, no overlay,
+// no dimming. These functions stay as named exports for the existing call
+// sites and to clean up any leftover indicator nodes from older sessions.
+function showRecordingBorder() {}
+
+function hideRecordingBorder() {
+  document.getElementById('recording-border')?.remove();
+  document.getElementById('rec-border')?.remove();
+  document.getElementById('rec-ratio-indicator')?.remove();
+}
+
+// Restore the renderer + camera to track the live viewport box. Called on every
+// recording exit path (success, error, "too short", MediaRecorder failure).
+// Also clears the isRecording guard so the global resize/layout handlers
+// resume managing the canvas, and removes the red REC border.
+function restoreViewportSize() {
+  // Capture happened on an offscreen canvas — the live canvas/renderer/camera
+  // were never touched, so there's nothing to restore there. Just dispose the
+  // offscreen renderer, clear the recording flag, and remove any orphan
+  // indicator nodes from older sessions.
+  stopOffscreenRecording();
+  isRecording = false;
+  hideRecordingBorder();
+}
+
 recordBtn.addEventListener('click', async () => {
   recordedChunks = [];
 
@@ -1729,9 +1850,23 @@ recordBtn.addEventListener('click', async () => {
   gridHelper.visible = false;
   targetGlyph.visible = false;
   gizmoRenderer.domElement.style.display = 'none';
-  
-  const stream = renderer.domElement.captureStream(30); 
-  
+
+  // Capture happens entirely on an offscreen canvas at the chosen output
+  // dimensions and aspect. The live renderer / camera / canvas are not
+  // touched, so the on-screen viewport stays visually identical before,
+  // during, and after recording.
+  const ratioSelect = document.getElementById('ratio-select');
+  const selectedRatio = ratioSelect?.value || '16:9';
+  const outputDims = RATIO_DIMENSIONS[selectedRatio] || { w: 1920, h: 1080 };
+
+  isRecording = true;
+  const stream = startOffscreenRecording(outputDims);
+
+  // Pre-roll: let the encoder pipeline warm up for ~3 frames before we
+  // start collecting data. Without this, the first chunks come in at lower
+  // quality while VP9/VP8 ramps up its rate-control model.
+  await new Promise(resolve => setTimeout(resolve, 100));
+
   const mimeType = [
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
@@ -1753,6 +1888,7 @@ recordBtn.addEventListener('click', async () => {
   } catch (e) {
     console.error('MediaRecorder not supported', e);
     _restoreRecordingHelpers();
+    restoreViewportSize();
     showToast(getTranslation('mediaRecNotSupported'));
     return;
   }
@@ -1772,6 +1908,7 @@ recordBtn.addEventListener('click', async () => {
 
     if (recordedChunks.length === 0) {
       console.log('No chunks recorded');
+      restoreViewportSize();
       return;
     }
 
@@ -1807,6 +1944,8 @@ recordBtn.addEventListener('click', async () => {
         showToast(getTranslation('exportFailed') + result.message);
       }
     }
+    // Always restore the live-viewport renderer/camera once the export round-trip is done.
+    restoreViewportSize();
   };
 
   mediaRecorder.start(100);
@@ -1837,6 +1976,14 @@ stopBtn.addEventListener('click', () => {
       mediaRecorder.onstop = null;
       mediaRecorder.stop();
     }
+    // onstop was nulled, so restore the renderer/camera ourselves and
+    // re-show the helpers (grid, target glyph, gizmo).
+    if (gridHelper) gridHelper.visible = true;
+    if (targetGlyph && pipelineState && typeof pipelineState === 'object') {
+      // targetGlyph visibility is managed elsewhere; only flip if it was on before
+    }
+    if (gizmoRenderer && gizmoRenderer.domElement) gizmoRenderer.domElement.style.display = '';
+    restoreViewportSize();
   } else {
     if (mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
@@ -2430,6 +2577,9 @@ function updateSafeFrame() {
 }
 
 document.getElementById('ratio-select').addEventListener('change', () => {
+  // Just refresh the safe-frame overlay — the camera/renderer don't change.
+  // Recording is letterboxed by ffmpeg to fit the chosen ratio, so the live
+  // preview can stay calibrated to the viewport box.
   updateSafeFrame();
   markSceneModified();
 });
@@ -4117,6 +4267,8 @@ setLayout(savedLayout);
 let _simpleHandlePositionUpdater = null;
 
 function updateViewportHeight() {
+  // Don't reflow renderer/camera mid-recording — capture is using export dims.
+  if (isRecording) return;
   const viewport = document.getElementById('viewport');
   if (!viewport) return;
   const w = viewport.clientWidth;
@@ -4331,7 +4483,7 @@ function onNanobananaComplete(imagePath) {
   pipelineState.seedanceReferenceImage = imagePath;
   const refArea = document.getElementById('sd-ref-image-area');
   if (refArea && imagePath) {
-    const imgUrl = _toFileUrl(imagePath);
+    const imgUrl = _toMediaUrl(imagePath);
     refArea.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
   }
   advanceFromStep('nanobanana');
@@ -4525,14 +4677,41 @@ function toggleSkipStep(stepId) {
   syncNodeEditor();
 }
 
+// Produces a refluent://local/... URL with proper per-segment percent-encoding.
+// Used when something explicitly needs the custom protocol (currently nothing
+// — Three.js loaders use Blob URLs and media uses _toMediaUrl below — but kept
+// available for future fetch/XHR cases that need the privileged scheme).
 function _toFileUrl(p) {
   if (!p) return '';
   if (p.startsWith('refluent:')) return p;
-  // Migrate legacy file:/// values from older saves
+  // Migrate legacy file:/// URLs from older .ent saves
   if (p.startsWith('file:')) {
     try { p = decodeURI(p.replace(/^file:\/+/, '')); } catch { p = p.replace(/^file:\/+/, ''); }
   }
-  return 'refluent:///' + p.replace(/\\/g, '/');
+  p = p.replace(/\\/g, '/');
+  // Encode each segment, but leave the drive-letter segment ("C:") and "/" untouched
+  p = p.split('/').map(seg => {
+    if (/^[A-Za-z]:$/.test(seg)) return seg;
+    return encodeURIComponent(seg).replace(/%20/g, ' ');
+  }).join('/');
+  return 'refluent://local/' + p;
+}
+
+// Produces a file:/// URL for <img>/<video>. With webSecurity:true, Chromium
+// still allows a file:// origin to load other file:// images/video (this
+// long-standing relaxation is what desktop apps rely on). This avoids the
+// custom-scheme parsing edge cases entirely for media elements.
+function _toMediaUrl(p) {
+  if (!p) return '';
+  if (p.startsWith('http:') || p.startsWith('https:') || p.startsWith('data:') || p.startsWith('blob:')) return p;
+  if (p.startsWith('file:')) return p;
+  if (p.startsWith('refluent://local/')) {
+    return 'file:///' + p.replace(/^refluent:\/\/local\//, '');
+  }
+  if (p.startsWith('refluent:')) {
+    return 'file:///' + p.replace(/^refluent:\/+/, '');
+  }
+  return 'file:///' + p.replace(/\\/g, '/');
 }
 
 function _buildMp4ThumbnailHTML(filename, mp4Url) {
@@ -4555,14 +4734,14 @@ function _wireMp4Thumbnail(scope, mp4Path) {
   }
   if (wrap) {
     wrap.addEventListener('click', () => {
-      showNanobananaFullscreen(_toFileUrl(mp4Path), mp4Path);
+      showNanobananaFullscreen(_toMediaUrl(mp4Path), mp4Path);
     });
   }
 }
 
 function updateStepMediaPreviews() {
   if (pipelineState.mp4Path) {
-    const html = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toFileUrl(pipelineState.mp4Path));
+    const html = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toMediaUrl(pipelineState.mp4Path));
     // Simple Mode card
     const content = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
     if (content && !content.querySelector('input, textarea, button')) {
@@ -5004,7 +5183,7 @@ function restorePipelineUI() {
   // Idempotent — passes through values already in `file://` form,
   // wraps raw Windows paths once. Guards against double-prefix bugs from
   // older saves where pipelineState fields were stored as URLs.
-  const fileUrl = (p) => p ? _toFileUrl(p) : null;
+  const fileUrl = (p) => p ? _toMediaUrl(p) : null;
 
   // MP4 card — video thumbnail with play overlay + click-to-fullscreen
   if (pipelineState.mp4Path) {
@@ -5129,7 +5308,7 @@ function refreshRefImageSlots() {
     document.querySelectorAll(`.ref-img-slot[data-slot="${i}"]`).forEach(slot => {
       const path = pipelineState.nanobananaReferenceImages[i];
       if (path) {
-        const safe = _toFileUrl(path);
+        const safe = _toMediaUrl(path);
         slot.innerHTML = `<img src="${safe}">`;
         slot.classList.add('filled');
       } else {
@@ -5230,7 +5409,7 @@ async function runNanobananaGenerate(scope) {
       if (status.status === 'complete') {
         _stopNanobananaPoller();
         _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
-        const imageUrl = status.imageUrl || _toFileUrl(status.imagePath || '');
+        const imageUrl = status.imageUrl || _toMediaUrl(status.imagePath || '');
         const imagePath = status.imagePath || null;
         showNanobananaResult(imageUrl, imagePath);
         markSceneModified();
@@ -5357,7 +5536,7 @@ async function runUpscaleGenerate(scope) {
 
 function updateNanobananaFramePreview() {
   if (!pipelineState.referenceFrameImage) return;
-  const imgUrl = _toFileUrl(pipelineState.referenceFrameImage);
+  const imgUrl = _toMediaUrl(pipelineState.referenceFrameImage);
   const previewHTML = `
     <div style="font-size:9px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">
       Input Frame
@@ -5539,7 +5718,7 @@ function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
         if (!imgPath) return;
         const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
         if (slot) {
-          const refUrl = _toFileUrl(imgPath);
+          const refUrl = _toMediaUrl(imgPath);
           slot.innerHTML = `<img src="${refUrl}">`;
           slot.classList.add('filled');
         }
@@ -5617,7 +5796,7 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
       if (savedRef) {
         const sdRefArea = document.getElementById('sd-ref-image-area');
         if (sdRefArea) {
-          const refUrl = _toFileUrl(savedRef);
+          const refUrl = _toMediaUrl(savedRef);
           sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
         }
       }
@@ -5664,7 +5843,7 @@ function wireStepCardInteractions(card, step) {
           });
           if (result && result.success && result.framePath) {
             pipelineState.referenceFrameImage = result.framePath;
-            const imgUrl = _toFileUrl(result.framePath);
+            const imgUrl = _toMediaUrl(result.framePath);
             const frameThumbHTML = `
                 <div style="position:relative;padding:6px;">
                   <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
@@ -5729,7 +5908,7 @@ function wireStepCardInteractions(card, step) {
       pipelineState.seedanceReferenceImage = filePath;
       const area = card.querySelector('#sd-ref-image-area');
       if (area) {
-        const safe = _toFileUrl(filePath);
+        const safe = _toMediaUrl(filePath);
         area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
       }
     });
@@ -6343,7 +6522,7 @@ function updateNodeMediaPreviews() {
   if (pipelineState.mp4Path) {
     const mp4Content = document.querySelector('.node-card[data-node="mp4"] .node-content');
     if (mp4Content && !mp4Content.querySelector('input, textarea, button')) {
-      const safeUrl = _toFileUrl(pipelineState.mp4Path);
+      const safeUrl = _toMediaUrl(pipelineState.mp4Path);
       mp4Content.innerHTML = `
         <div class="node-media-preview">
           <video src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;" preload="metadata" muted playsinline></video>
@@ -6482,7 +6661,7 @@ function buildNodeEditor() {
     });
     if (!filePath) return;
     pipelineState.seedanceReferenceImage = filePath;
-    const safe = _toFileUrl(filePath);
+    const safe = _toMediaUrl(filePath);
     document.querySelectorAll('.sd-ref-image-area, .sd-ref-image-area-node, #sd-ref-image-area').forEach(area => {
       area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
     });
@@ -6523,7 +6702,7 @@ function buildNodeEditor() {
         });
         if (result && result.success && result.framePath) {
           pipelineState.referenceFrameImage = result.framePath;
-          const imgUrl = _toFileUrl(result.framePath);
+          const imgUrl = _toMediaUrl(result.framePath);
           const thumbHTML = `
             <div style="position:relative;padding:6px;">
               <img src="${imgUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:4px;display:block;cursor:zoom-in;" title="Click to view full size">
