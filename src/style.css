@@ -594,6 +594,7 @@ button:active {
   overflow: hidden;
   position: relative;
   flex-shrink: 0;
+  transition: none;
 }
 
 #simple-panel::-webkit-scrollbar {
@@ -767,6 +768,7 @@ button:active {
   overflow: hidden;
   position: relative;
   flex-shrink: 0;
+  transition: none;
 }
 
 /* Mission J - Node Editor overhaul */
@@ -2168,20 +2170,59 @@ h1, h2, h3, .header {
   margin-top: 6px;
 }
 
-/* Resize handles */
+/* Resize handles — teal accent appears on hover */
 #simple-resize-handle {
+  position: fixed;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 1000;
+  background: transparent;
+  border-top: 2px solid transparent;
+  box-sizing: border-box;
   pointer-events: all;
+  transition: border-color 0.15s, background 0.15s;
 }
 #simple-resize-handle:hover {
-  background: var(--accent) !important;
-  opacity: 0.4;
+  border-top-color: var(--accent);
 }
+#simple-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+#simple-resize-handle:hover::after {
+  opacity: 0.6;
+}
+
 #node-resize-handle {
   pointer-events: all;
+  transition: background 0.15s;
 }
-#node-resize-handle:hover {
-  background: var(--accent) !important;
-  opacity: 0.4;
+#node-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 32px;
+  background: var(--accent);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+#node-resize-handle:hover::after {
+  opacity: 0.6;
 }
 
 /* Modal overlays */

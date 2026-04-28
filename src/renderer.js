@@ -4007,196 +4007,285 @@ const nodePanel = document.getElementById('node-panel');
 const btnSimple = document.getElementById('btn-simple');
 const btnNode = document.getElementById('btn-node');
 
+// Single source of truth for the simple-panel resize handle position.
+// Defined here (above setLayout) so layout switches can call it without
+// relying on hoisting. Kept in module scope so the drag handler in
+// initSimplePanelResize() reuses the same function.
+function updateHandlePosition() {
+  const handle = document.getElementById('simple-resize-handle');
+  const sp = document.getElementById('simple-panel');
+  if (!handle || !sp) return;
+  if (sp.style.display === 'none' || handle.style.display === 'none') return;
+  const rect = sp.getBoundingClientRect();
+  handle.style.top = (rect.top - 4) + 'px';
+  handle.style.left = rect.left + 'px';
+  handle.style.width = rect.width + 'px';
+}
+
 function setLayout(mode) {
-  const vp = document.getElementById('viewport');
+  const simplePanelEl = document.getElementById('simple-panel');
+  const nodePanelEl = document.getElementById('node-panel');
+  const viewport = document.getElementById('viewport');
+  const handle = document.getElementById('simple-resize-handle');
+
   if (mode === 'simple') {
     appContainer.style.flexDirection = 'column';
-    simplePanel.style.display = 'flex';
-    nodePanel.style.display = 'none';
+    if (simplePanelEl) {
+      simplePanelEl.style.display = '';
+      simplePanelEl.style.visibility = 'visible';
+      simplePanelEl.style.pointerEvents = 'auto';
+      simplePanelEl.style.width = '';
+      simplePanelEl.style.flexBasis = '';
+      const savedH = parseInt(localStorage.getItem('simple_panel_height'), 10);
+      simplePanelEl.style.height = (Number.isFinite(savedH) ? savedH : 200) + 'px';
+    }
+    if (nodePanelEl) {
+      nodePanelEl.style.display = 'none';
+      nodePanelEl.style.visibility = 'hidden';
+      nodePanelEl.style.width = '0';
+      nodePanelEl.style.minWidth = '0';
+      nodePanelEl.style.flexBasis = '0';
+      nodePanelEl.style.overflow = 'hidden';
+    }
+    if (viewport) {
+      viewport.style.width = '100%';
+      viewport.style.flex = '1';
+    }
+    if (handle) handle.style.display = 'block';
     if (btnSimple) { btnSimple.style.borderColor = '#fff'; btnSimple.style.opacity = '1'; }
     if (btnNode)   { btnNode.style.borderColor = '#444';   btnNode.style.opacity = '0.6'; }
-    localStorage.setItem('layout_mode', 'simple');
-  } else {
+
+  } else if (mode === 'node') {
     appContainer.style.flexDirection = 'row';
-    simplePanel.style.display = 'none';
-    nodePanel.style.display = 'block';
+    if (simplePanelEl) {
+      simplePanelEl.style.display = 'none';
+      simplePanelEl.style.visibility = 'hidden';
+      simplePanelEl.style.pointerEvents = 'none';
+    }
+    if (handle) handle.style.display = 'none';
+    if (nodePanelEl) {
+      nodePanelEl.style.display = 'flex';
+      nodePanelEl.style.visibility = 'visible';
+      nodePanelEl.style.overflow = 'visible';
+      const savedW = parseInt(localStorage.getItem('node_panel_width'), 10)
+        || Math.round(window.innerWidth * 0.35);
+      const clampedW = Math.max(
+        Math.round(window.innerWidth * 0.20),
+        Math.min(Math.round(window.innerWidth * 0.75), savedW)
+      );
+      nodePanelEl.style.width = clampedW + 'px';
+      nodePanelEl.style.minWidth = clampedW + 'px';
+      nodePanelEl.style.flexBasis = clampedW + 'px';
+      if (viewport) {
+        viewport.style.width = (window.innerWidth - clampedW) + 'px';
+        viewport.style.flex = 'none';
+      }
+    }
+    if (viewport) viewport.style.height = '';
     if (btnNode)   { btnNode.style.borderColor = '#fff';   btnNode.style.opacity = '1'; }
     if (btnSimple) { btnSimple.style.borderColor = '#444'; btnSimple.style.opacity = '0.6'; }
-    localStorage.setItem('layout_mode', 'node');
   }
-  // Defer resize until after the browser has recalculated flex layout
+
+  localStorage.setItem('refluent_layout_mode', mode);
+  // keep legacy key in sync so .ent saves and the Preferences dropdown still resolve
+  localStorage.setItem('layout_mode', mode);
+
+  // Defer post-switch work until flex layout has settled
   requestAnimationFrame(() => {
-    const w = vp.clientWidth;
-    const h = vp.clientHeight;
-    if (w > 0 && h > 0) {
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    }
+    updateViewportHeight();
+    if (mode === 'simple') updateHandlePosition();
+    if (mode === 'node' && typeof initNodePanelResize === 'function') initNodePanelResize();
     if (typeof positionSafeFrameOverlay === 'function') positionSafeFrameOverlay();
     if (typeof updateSafeFrame === 'function') updateSafeFrame();
-    // Reposition object popup after viewport dimensions have settled
     if (selectedObject && !objectPopup.classList.contains('hidden')) {
       showObjectPopup(selectedObject);
     }
     if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
+    window.dispatchEvent(new Event('resize'));
   });
 }
 
-function _layoutPostSwitch() {
-  setTimeout(() => {
-    if (typeof positionSafeFrameOverlay === 'function') positionSafeFrameOverlay();
-    if (typeof updateSafeFrame === 'function') updateSafeFrame();
-  }, 100);
-}
-if (btnSimple) btnSimple.addEventListener('click', () => { setLayout('simple'); _layoutPostSwitch(); });
-if (btnNode)   btnNode.addEventListener('click',   () => { setLayout('node');   _layoutPostSwitch(); });
+if (btnSimple) btnSimple.addEventListener('click', () => setLayout('simple'));
+if (btnNode)   btnNode.addEventListener('click',   () => setLayout('node'));
 
-const savedLayout = localStorage.getItem('layout_mode') || 'simple';
+const savedLayout = localStorage.getItem('refluent_layout_mode')
+  || localStorage.getItem('layout_mode')
+  || 'simple';
 setLayout(savedLayout);
 
-// ---- Resizable panels (Mission 3) ----
-(function wireSimplePanelResize() {
-  if (!simplePanel) return;
-  const oldHandle = document.getElementById('simple-resize-handle');
-  if (oldHandle) oldHandle.remove();
+// ---- Resizable panels ----
+let _simpleHandlePositionUpdater = null;
 
-  const simpleResizeHandle = document.createElement('div');
-  simpleResizeHandle.id = 'simple-resize-handle';
-  simpleResizeHandle.style.cssText = `
-    position: absolute;
-    top: -5px;
-    left: 0;
-    width: 100%;
-    height: 10px;
-    cursor: ns-resize;
-    z-index: 500;
-    background: transparent;`;
-  simplePanel.style.position = 'relative';
-  simplePanel.appendChild(simpleResizeHandle);
+function updateViewportHeight() {
+  const viewport = document.getElementById('viewport');
+  if (!viewport) return;
+  const w = viewport.clientWidth;
+  const h = viewport.clientHeight;
+  if (w <= 0 || h <= 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  if (typeof positionSafeFrameOverlay === 'function') positionSafeFrameOverlay();
+  if (typeof updateSafeFrame === 'function') updateSafeFrame();
+  if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
+}
 
-  let simpleResizing = false;
-  let simpleResizeStartY = 0;
-  let simpleResizeStartHeight = 0;
-  const SIMPLE_MIN_HEIGHT = 80;
-  const SIMPLE_MAX_HEIGHT = Math.round(window.innerHeight * 0.5);
+window.addEventListener('resize', updateViewportHeight);
 
-  simpleResizeHandle.addEventListener('mouseenter', () => {
-    simpleResizeHandle.style.background = 'rgba(74,159,165,0.3)';
-    document.body.style.cursor = 'ns-resize';
-  });
-  simpleResizeHandle.addEventListener('mouseleave', () => {
-    if (!simpleResizing) {
-      simpleResizeHandle.style.background = 'transparent';
-      document.body.style.cursor = 'default';
-    }
-  });
+function initSimplePanelResize() {
+  const simplePanelEl = document.getElementById('simple-panel');
+  if (!simplePanelEl) return;
 
-  simpleResizeHandle.addEventListener('mousedown', (e) => {
+  const old = document.getElementById('simple-resize-handle');
+  if (old) old.remove();
+
+  const handle = document.createElement('div');
+  handle.id = 'simple-resize-handle';
+  document.body.appendChild(handle);
+
+  // Re-run positioner whenever the window or layout shifts
+  if (_simpleHandlePositionUpdater) {
+    window.removeEventListener('resize', _simpleHandlePositionUpdater);
+  }
+  _simpleHandlePositionUpdater = updateHandlePosition;
+  window.addEventListener('resize', _simpleHandlePositionUpdater);
+
+  const MIN_H = 120;
+  const MAX_H = () => Math.round(window.innerHeight * 0.6);
+
+  let dragging = false;
+  let startY = 0;
+  let startH = 0;
+
+  handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    simpleResizing = true;
-    simpleResizeStartY = e.clientY;
-    simpleResizeStartHeight = simplePanel.offsetHeight;
+    dragging = true;
+    startY = e.clientY;
+    startH = simplePanelEl.offsetHeight;
     document.body.style.cursor = 'ns-resize';
-    simpleResizeHandle.style.background = 'rgba(74,159,165,0.5)';
+    document.body.style.userSelect = 'none';
+
+    const dragOverlay = document.createElement('div');
+    dragOverlay.id = 'resize-drag-overlay';
+    dragOverlay.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;cursor:ns-resize;`;
+    document.body.appendChild(dragOverlay);
+
+    const onMove = (ev) => {
+      if (!dragging) return;
+      const delta = startY - ev.clientY;
+      const newH = Math.max(MIN_H, Math.min(MAX_H(), startH + delta));
+      simplePanelEl.style.height = newH + 'px';
+      localStorage.setItem('simple_panel_height', newH);
+      updateHandlePosition();
+      updateViewportHeight();
+      if (typeof updateStepPositions === 'function') updateStepPositions();
+      if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
+    };
+    const onUp = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.getElementById('resize-drag-overlay')?.remove();
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   });
 
-  window.addEventListener('mousemove', (e) => {
-    if (!simpleResizing) return;
-    const delta = simpleResizeStartY - e.clientY;
-    const newHeight = Math.max(SIMPLE_MIN_HEIGHT,
-      Math.min(SIMPLE_MAX_HEIGHT, simpleResizeStartHeight + delta));
-    simplePanel.style.height = newHeight + 'px';
-    if (typeof updateStepPositions === 'function') updateStepPositions();
-    if (typeof updateNavHintPosition === 'function') updateNavHintPosition();
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (!simpleResizing) return;
-    simpleResizing = false;
-    document.body.style.cursor = 'default';
-    simpleResizeHandle.style.background = 'transparent';
-    localStorage.setItem('simple_panel_height', simplePanel.offsetHeight);
-  });
-
+  // Restore saved height
   const saved = localStorage.getItem('simple_panel_height');
-  if (saved) simplePanel.style.height = parseInt(saved, 10) + 'px';
-})();
+  if (saved) {
+    const h = parseInt(saved, 10);
+    if (h >= MIN_H && h <= MAX_H()) simplePanelEl.style.height = h + 'px';
+  }
 
-(function wireNodePanelResize() {
-  if (!nodePanel) return;
-  const oldNodeHandle = document.getElementById('node-resize-handle');
-  if (oldNodeHandle) oldNodeHandle.remove();
+  // Hide if simple panel is currently hidden (e.g. node mode); setLayout flips it on
+  if (simplePanelEl.style.display === 'none') handle.style.display = 'none';
+  updateHandlePosition();
+}
 
-  const nodeResizeHandle = document.createElement('div');
-  nodeResizeHandle.id = 'node-resize-handle';
-  nodeResizeHandle.style.cssText = `
+function initNodePanelResize() {
+  const nodePanelEl = document.getElementById('node-panel');
+  if (!nodePanelEl) return;
+
+  const old = document.getElementById('node-resize-handle');
+  if (old) old.remove();
+
+  const handle = document.createElement('div');
+  handle.id = 'node-resize-handle';
+  handle.style.cssText = `
     position: absolute;
     top: 0;
-    left: -5px;
-    width: 10px;
+    left: -4px;
+    width: 8px;
     height: 100%;
     cursor: ew-resize;
-    z-index: 500;
+    z-index: 1000;
     background: transparent;`;
-  nodePanel.style.position = 'relative';
-  nodePanel.appendChild(nodeResizeHandle);
+  nodePanelEl.style.position = 'relative';
+  nodePanelEl.appendChild(handle);
 
-  let nodeResizing = false;
-  let nodeResizeStartX = 0;
-  let nodeResizeStartWidth = 0;
-  const NODE_MIN_WIDTH = Math.round(window.innerWidth * 0.15);
-  const NODE_MAX_WIDTH = Math.round(window.innerWidth * 0.6);
+  const MIN_W = () => Math.round(window.innerWidth * 0.20);
+  const MAX_W = () => Math.round(window.innerWidth * 0.75);
 
-  nodeResizeHandle.addEventListener('mouseenter', () => {
-    nodeResizeHandle.style.background = 'rgba(74,159,165,0.3)';
-    document.body.style.cursor = 'ew-resize';
-  });
-  nodeResizeHandle.addEventListener('mouseleave', () => {
-    if (!nodeResizing) {
-      nodeResizeHandle.style.background = 'transparent';
-      document.body.style.cursor = 'default';
-    }
-  });
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
 
-  nodeResizeHandle.addEventListener('mousedown', (e) => {
+  handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    nodeResizing = true;
-    nodeResizeStartX = e.clientX;
-    nodeResizeStartWidth = nodePanel.offsetWidth;
+    dragging = true;
+    startX = e.clientX;
+    startW = nodePanelEl.offsetWidth;
     document.body.style.cursor = 'ew-resize';
-    nodeResizeHandle.style.background = 'rgba(74,159,165,0.5)';
+    document.body.style.userSelect = 'none';
+
+    const dragOverlay = document.createElement('div');
+    dragOverlay.id = 'resize-drag-overlay';
+    dragOverlay.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;cursor:ew-resize;`;
+    document.body.appendChild(dragOverlay);
+
+    const onMove = (ev) => {
+      if (!dragging) return;
+      const delta = startX - ev.clientX;
+      const newW = Math.max(MIN_W(), Math.min(MAX_W(), startW + delta));
+      nodePanelEl.style.width = newW + 'px';
+      nodePanelEl.style.flexBasis = newW + 'px';
+      const viewportEl = document.getElementById('viewport');
+      if (viewportEl) viewportEl.style.width = (window.innerWidth - newW) + 'px';
+      window.dispatchEvent(new Event('resize'));
+      localStorage.setItem('node_panel_width', newW);
+    };
+    const onUp = () => {
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.getElementById('resize-drag-overlay')?.remove();
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   });
 
-  window.addEventListener('mousemove', (e) => {
-    if (!nodeResizing) return;
-    const delta = nodeResizeStartX - e.clientX;
-    const newWidth = Math.max(NODE_MIN_WIDTH,
-      Math.min(NODE_MAX_WIDTH, nodeResizeStartWidth + delta));
-    nodePanel.style.width = newWidth + 'px';
-    const viewportEl = document.getElementById('viewport');
-    if (viewportEl) viewportEl.style.width = (window.innerWidth - newWidth) + 'px';
-    window.dispatchEvent(new Event('resize'));
-    localStorage.setItem('node_panel_width', newWidth);
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (!nodeResizing) return;
-    nodeResizing = false;
-    document.body.style.cursor = 'default';
-    nodeResizeHandle.style.background = 'transparent';
-  });
-
+  // Restore saved width
   const saved = localStorage.getItem('node_panel_width');
   if (saved) {
-    const nw = parseInt(saved, 10);
-    nodePanel.style.width = nw + 'px';
-    const viewportEl = document.getElementById('viewport');
-    if (viewportEl) viewportEl.style.width = (window.innerWidth - nw) + 'px';
+    const w = parseInt(saved, 10);
+    if (w >= MIN_W() && w <= MAX_W()) {
+      nodePanelEl.style.width = w + 'px';
+      nodePanelEl.style.flexBasis = w + 'px';
+      const vp = document.getElementById('viewport');
+      if (vp) vp.style.width = (window.innerWidth - w) + 'px';
+    }
   }
-})();
+}
+
+initSimplePanelResize();
+initNodePanelResize();
 
 // ---- Simple Mode Pipeline ----
 
