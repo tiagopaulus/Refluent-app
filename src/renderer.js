@@ -2591,12 +2591,12 @@ function showWalkthrough() {
     {
       en: {
         title: 'Set Your Save Folder',
-        body: 'Choose a folder where your MP4 recordings will be saved automatically. You can change this anytime in Refluent → Preferences.',
+        body: 'Choose a folder where all your Refluent outputs will be saved automatically — MP4 recordings, reference frames and AI-generated images. You can change this anytime in Refluent → Preferences.',
         action: 'Choose Folder'
       },
       kr: {
         title: '저장 폴더 설정',
-        body: 'MP4 녹화 파일이 자동으로 저장될 폴더를 선택하세요. Refluent → 환경설정에서 언제든지 변경할 수 있습니다.',
+        body: 'MP4 녹화본, 레퍼런스 프레임, AI 생성 이미지 등 모든 Refluent 결과물이 자동으로 저장될 폴더를 선택하세요. Refluent → 환경설정에서 언제든지 변경할 수 있습니다.',
         action: '폴더 선택'
       }
     }
@@ -2705,6 +2705,33 @@ function getTourSteps() {
       position: 'bottom', action: 'click' },
     { id: 'mp4-ready',      target: '.step-card[data-step-key="mp4"]',
       title: t('tourTitle11'), body: t('tourBody11'),
+      position: 'top',   action: 'next' },
+    { id: 'select-frame',   target: '.step-card[data-step-key="frame"]',
+      title: t('tourTitle12'), body: t('tourBody12'),
+      position: 'top',   action: 'next' },
+    { id: 'frame-input',    target: '#frame-input',
+      title: t('tourTitle13'), body: t('tourBody13'),
+      position: 'top',   action: 'click' },
+    { id: 'ref-image-slot', target: '.step-card[data-step-key="nanobanana"] .ref-img-slot[data-slot="0"]',
+      title: t('tourTitle14'), body: t('tourBody14'),
+      position: 'top',   action: 'next' },
+    { id: 'ref-image-hint', target: '#nb-img-hint',
+      title: t('tourTitle15'), body: t('tourBody15'),
+      position: 'top',   action: 'next' },
+    { id: 'nb-template-btn', target: '.step-card[data-step-key="nanobanana"] .template-picker-btn',
+      title: t('tourTitle16'), body: t('tourBody16'),
+      position: 'top',   action: 'click' },
+    { id: 'nb-prompt',      target: '#nb-prompt',
+      title: t('tourTitle17'), body: t('tourBody17'),
+      position: 'top',   action: 'next' },
+    { id: 'nb-generate',    target: '.step-card[data-step-key="nanobanana"] .nb-generate-btn',
+      title: t('tourTitle18'), body: t('tourBody18'),
+      position: 'top',   action: 'click' },
+    { id: 'nb-keep-regenerate', target: '.step-card[data-step-key="nanobanana"] .nb-result-actions',
+      title: t('tourTitle19'), body: t('tourBody19'),
+      position: 'top',   action: 'next' },
+    { id: 'pipeline-complete', target: '.step-card[data-step-key="seedance"]',
+      title: t('tourTitle20'), body: t('tourBody20'),
       position: 'top',   action: 'next' }
   ];
 }
@@ -2821,6 +2848,13 @@ function showTourStep(index) {
     tourStep--;
     showTourStep(tourStep);
   });
+
+  // Toggle SVG overlay click-blocking:
+  // - 'click' action → pointer-events:none so the user can click the highlighted target.
+  // - 'next'  action → pointer-events:all  so accidental clicks on the spotlit
+  //                    element don't fire — user must use the Next button.
+  const _svg = document.getElementById('tour-spotlight-svg');
+  if (_svg) _svg.style.pointerEvents = step.action === 'click' ? 'none' : 'all';
 
   if (step.action === 'click') {
     _tourClickTarget = target;
