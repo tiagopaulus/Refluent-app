@@ -173,37 +173,158 @@ const PROMPT_TEMPLATES = {
 };
 
 // ---- Pipeline State ----
+// Mission J (v3.0): each stage now tracks a version counter that increments
+// every time its output is committed. Downstream stages remember the version
+// of their upstream source. A mismatch ⇒ downstream is "stale" and the user
+// is shown a non-blocking yellow chip + an option to ⟲ Replace.
+//
+// Old .ent files don't have these fields — they load as 0 (via `|| 0`) which
+// means "no upstream lineage tracked", and we treat that as not-stale by
+// convention. Non-breaking.
 const pipelineState = {
   // Stage 1 — Viewport
   mp4Path: null,
   mp4Filename: null,
+  mp4Version: 0,
 
   // Stage 2 — Frame Selection
   referenceFrame: null,
   referenceFrameImage: null,
+  referenceFrameTimestamp: null,
+  frameVersion: 0,
+  frameSourceMp4Version: 0,
 
   // Stage 3 — Nanobanana
   nanobananaPrompt: null,
   nanobananaReferenceImages: [],
   nanobananaResultImage: null,
   nanobananaSkipped: false,
+  nanobananaVersion: 0,
+  nanobananaSourceFrameVersion: 0,
 
   // Stage 4 — Seedance
   seedancePrompt: null,
   seedanceReferenceImage: null,
   seedanceResultVideo: null,
   seedanceSkipped: false,
+  seedanceVersion: 0,
+  seedanceSourceNanobananaVersion: 0,
 
   // Stage 5 — Upscale
   upscalePrompt: null,
   upscaleResolution: '4k',
   upscaleResult: null,
   upscaleSkipped: false,
+  upscaleVersion: 0,
+  upscaleSourceSeedanceVersion: 0,
 
   // Global
   currentStep: 0,
   activeSteps: ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale']
 };
+
+// ---- Mission J (v3.0): Staleness helpers ----
+// A node is stale when its remembered upstream version is older than the
+// upstream's current version. Returns false if no upstream version was ever
+// recorded (legacy data, fresh state) or if there's no upstream output yet.
+function isFrameStale() {
+  if (!pipelineState.referenceFrameImage) return false;
+  if (!pipelineState.frameSourceMp4Version) return false;
+  return pipelineState.frameSourceMp4Version !== pipelineState.mp4Version;
+}
+function isNanobananaStale() {
+  if (!pipelineState.nanobananaResultImage) return false;
+  if (!pipelineState.nanobananaSourceFrameVersion) return false;
+  return pipelineState.nanobananaSourceFrameVersion !== pipelineState.frameVersion;
+}
+function isSeedanceStale() {
+  if (!pipelineState.seedanceResultVideo) return false;
+  if (!pipelineState.seedanceSourceNanobananaVersion) return false;
+  return pipelineState.seedanceSourceNanobananaVersion !== pipelineState.nanobananaVersion;
+}
+function isUpscaleStale() {
+  if (!pipelineState.upscaleResult) return false;
+  if (!pipelineState.upscaleSourceSeedanceVersion) return false;
+  return pipelineState.upscaleSourceSeedanceVersion !== pipelineState.seedanceVersion;
+}
+function getStaleNodes() {
+  const stale = [];
+  if (isFrameStale()) stale.push('frame');
+  if (isNanobananaStale()) stale.push('nanobanana');
+  if (isSeedanceStale()) stale.push('seedance');
+  if (isUpscaleStale()) stale.push('upscale');
+  return stale;
+}
+// Mission J2 (v3.0): refresh the yellow "outdated" chip visibility on every
+// node based on current staleness state. Called after any version bump.
+function refreshStaleChips() {
+  const map = {
+    frame: isFrameStale(),
+    nanobanana: isNanobananaStale(),
+    seedance: isSeedanceStale(),
+    upscale: isUpscaleStale()
+  };
+  for (const [stepKey, stale] of Object.entries(map)) {
+    document.querySelectorAll(`[data-stale-chip-for="${stepKey}"]`).forEach(chip => {
+      chip.classList.toggle('hidden', !stale);
+    });
+  }
+}
+
+// Mission J2 (v3.0): build the header actions HTML (Replace button + stale chip).
+// Used by both the Simple Mode step cards and the Node Editor node cards.
+// stepKey: 'mp4' | 'frame' | 'nanobanana' | 'seedance' | 'upscale'
+// hasContent: whether the node currently has output (controls Replace visibility)
+function buildCardHeaderActionsHTML(stepKey, hasContent) {
+  const replaceLabel = (typeof getTranslation === 'function') ? getTranslation('replace') : 'Replace';
+  const outdatedLabel = (typeof getTranslation === 'function') ? getTranslation('outdated') : 'outdated';
+  const staleTooltip = (typeof getTranslation === 'function') ? getTranslation('staleTooltip') : 'Generated from a previous version';
+  const showReplace = hasContent && stepKey !== 'mp4-empty';
+  return `
+    <div class="card-header-actions">
+      <span class="stale-chip hidden" data-stale-chip-for="${stepKey}" title="${staleTooltip}">⚠ ${outdatedLabel}</span>
+      ${showReplace ? `<button class="replace-btn" data-replace-for="${stepKey}" title="${staleTooltip}">⟲ ${replaceLabel}</button>` : ''}
+    </div>
+  `;
+}
+
+// Mission J2 (v3.0): clear a stage's output so the user can redo it.
+// Does NOT clear downstream automatically — staleness chips communicate that.
+function replaceStage(stepKey) {
+  if (stepKey === 'mp4') {
+    pipelineState.mp4Path = null;
+    pipelineState.mp4Filename = null;
+    // Don't clear mp4Version — leave it as-is. The new recording will bump it,
+    // making downstream nodes stale (which is what we want).
+    rebuildSimplePanel();
+    buildNodeEditor();
+    activateStep('mp4');
+  } else if (stepKey === 'frame') {
+    pipelineState.referenceFrame = null;
+    pipelineState.referenceFrameImage = null;
+    pipelineState.referenceFrameTimestamp = null;
+    rebuildSimplePanel();
+    buildNodeEditor();
+    activateStep('frame');
+  }
+  // J3 will add nanobanana / seedance / upscale handlers
+  refreshStaleChips();
+  markSceneModified();
+}
+
+// Mission J2 (v3.0): wire Replace buttons inside a given DOM scope.
+// Idempotent — uses a flag to skip already-wired buttons.
+function wireReplaceButtons(scope) {
+  if (!scope) return;
+  scope.querySelectorAll('.replace-btn[data-replace-for]').forEach(btn => {
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      replaceStage(btn.dataset.replaceFor);
+    });
+  });
+}
 
 // ---- Scene Setup ----
 const container = document.getElementById('viewport');
@@ -769,8 +890,11 @@ const updateTransformUI = () => {
   scaleXVal.innerText = sx.toFixed(1);
   scaleYVal.innerText = sy.toFixed(1);
   scaleZVal.innerText = sz.toFixed(1);
-  
+
   panelTitle.innerText = selectedObject.userData.modelName || "Object";
+
+  // Mission K (v3.0): refresh collapsed-section status hints
+  if (typeof _updateAllPopupStatuses === 'function') _updateAllPopupStatuses();
 };
 
 const handlePosInput = (axis, value) => {
@@ -828,48 +952,89 @@ objectPopup.innerHTML = `
     <button id="popup-delete" title="Delete object"
       style="background:none;border:none;cursor:pointer;color:#555;font-size:22px;padding:0 2px;">&#128465;</button>
   </div>
-  <div id="popup-move-label" style="font-size:11px;color:#777;margin:8px 0 6px 0;">Move your object</div>
-  <div class="popup-axis-row">
-    <span class="axis-label">L/R</span>
-    <input type="range" data-axis="x" data-type="position" min="-3" max="3" step="0.001" value="0">
+
+  <!-- ============ MOVE (default expanded) ============ -->
+  <div class="popup-section" data-section="move">
+    <div class="popup-section-header" data-target="move">
+      <span class="popup-section-chevron">&#9662;</span>
+      <span class="popup-section-title" id="popup-move-label">Move your object</span>
+      <span class="popup-section-status" id="popup-move-status"></span>
+    </div>
+    <div class="popup-section-body" id="popup-move-body">
+      <div class="popup-axis-row">
+        <span class="axis-label">L/R</span>
+        <input type="range" data-axis="x" data-type="position" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">U/D</span>
+        <input type="range" data-axis="y" data-type="position" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">F/B</span>
+        <input type="range" data-axis="z" data-type="position" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <button class="popup-reset-btn" id="reset-position-btn">
+        &#8634; Reset Position
+      </button>
+    </div>
   </div>
-  <div class="popup-axis-row">
-    <span class="axis-label">U/D</span>
-    <input type="range" data-axis="y" data-type="position" min="-3" max="3" step="0.001" value="0">
+
+  <!-- ============ ROTATE (default collapsed) — Mission K (v3.0) ============ -->
+  <div class="popup-section collapsed" data-section="rotate">
+    <div class="popup-section-header" data-target="rotate">
+      <span class="popup-section-chevron">&#9656;</span>
+      <span class="popup-section-title" id="popup-rotate-label">Rotate your object</span>
+      <span class="popup-section-status" id="popup-rotate-status"></span>
+    </div>
+    <div class="popup-section-body" id="popup-rotate-body">
+      <div class="popup-axis-row">
+        <span class="axis-label" id="popup-rot-pitch-label">Pitch</span>
+        <input type="range" data-axis="x" data-type="rotation" min="-180" max="180" step="1" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label" id="popup-rot-yaw-label">Yaw</span>
+        <input type="range" data-axis="y" data-type="rotation" min="-180" max="180" step="1" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label" id="popup-rot-roll-label">Roll</span>
+        <input type="range" data-axis="z" data-type="rotation" min="-180" max="180" step="1" value="0">
+      </div>
+      <button class="popup-reset-btn" id="reset-rotation-btn">
+        &#8634; Reset Rotation
+      </button>
+    </div>
   </div>
-  <div class="popup-axis-row">
-    <span class="axis-label">F/B</span>
-    <input type="range" data-axis="z" data-type="position" min="-3" max="3" step="0.001" value="0">
+
+  <!-- ============ RESIZE (default collapsed) ============ -->
+  <div class="popup-section collapsed" data-section="resize">
+    <div class="popup-section-header" data-target="resize">
+      <span class="popup-section-chevron">&#9656;</span>
+      <span class="popup-section-title" id="popup-resize-label">Resize your object</span>
+      <span class="popup-section-status" id="popup-resize-status"></span>
+    </div>
+    <div class="popup-section-body" id="popup-resize-body">
+      <div id="uniform-scale-row" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+        <input type="checkbox" id="uniform-scale-check" style="accent-color:var(--accent);cursor:pointer;width:12px;height:12px;">
+        <label for="uniform-scale-check" style="font-size:10px;color:var(--text-secondary);cursor:pointer;user-select:none;">Uniform Scale</label>
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">X</span>
+        <input type="range" data-axis="x" data-type="scale" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">Y</span>
+        <input type="range" data-axis="y" data-type="scale" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <div class="popup-axis-row">
+        <span class="axis-label">Z</span>
+        <input type="range" data-axis="z" data-type="scale" min="-3" max="3" step="0.001" value="0">
+      </div>
+      <button class="popup-reset-btn" id="reset-scale-btn">
+        &#8634; Reset Scale
+      </button>
+    </div>
   </div>
-  <button class="popup-reset-btn" id="reset-position-btn"
-    style="width:100%;margin:4px 0 8px 0;background:#1a1a1a;
-    border:1px solid #333;border-radius:3px;color:#666;
-    font-size:11px;padding:5px;cursor:pointer;">
-    &#8634; Reset Position
-  </button>
-  <div id="popup-resize-label" style="font-size:11px;color:#777;margin:8px 0 6px 0;">Resize your object</div>
-  <div id="uniform-scale-row" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-    <input type="checkbox" id="uniform-scale-check" style="accent-color:var(--accent);cursor:pointer;width:12px;height:12px;">
-    <label for="uniform-scale-check" style="font-size:10px;color:var(--text-secondary);cursor:pointer;user-select:none;">Uniform Scale</label>
-  </div>
-  <div class="popup-axis-row">
-    <span class="axis-label">X</span>
-    <input type="range" data-axis="x" data-type="scale" min="-3" max="3" step="0.001" value="0">
-  </div>
-  <div class="popup-axis-row">
-    <span class="axis-label">Y</span>
-    <input type="range" data-axis="y" data-type="scale" min="-3" max="3" step="0.001" value="0">
-  </div>
-  <div class="popup-axis-row">
-    <span class="axis-label">Z</span>
-    <input type="range" data-axis="z" data-type="scale" min="-3" max="3" step="0.001" value="0">
-  </div>
-  <button class="popup-reset-btn" id="reset-scale-btn"
-    style="width:100%;margin:4px 0 0 0;background:#1a1a1a;
-    border:1px solid #333;border-radius:3px;color:#666;
-    font-size:11px;padding:5px;cursor:pointer;">
-    &#8634; Reset Scale
-  </button>
+
   <div id="popup-anim-section" style="border-top:1px solid #1e1e1e;margin-top:10px;padding-top:8px;">
     <div id="popup-anim-label" style="font-size:10px;color:#555;margin-bottom:6px;letter-spacing:1px;">ANIMATE</div>
     <div id="anim-btns" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
@@ -915,8 +1080,27 @@ document.getElementById('viewport').appendChild(objectPopup);
 function _localizePopup() {
   const moveLbl = document.getElementById('popup-move-label');
   if (moveLbl) moveLbl.innerText = getTranslation('panelMove');
+  const rotateLbl = document.getElementById('popup-rotate-label');
+  if (rotateLbl) rotateLbl.innerText = getTranslation('panelRotate');
   const resizeLbl = document.getElementById('popup-resize-label');
   if (resizeLbl) resizeLbl.innerText = getTranslation('panelResize');
+
+  // Mission K: localized rotation axis labels (Pitch/Yaw/Roll)
+  const pitchLbl = document.getElementById('popup-rot-pitch-label');
+  if (pitchLbl) pitchLbl.innerText = getTranslation('rotPitch');
+  const yawLbl = document.getElementById('popup-rot-yaw-label');
+  if (yawLbl) yawLbl.innerText = getTranslation('rotYaw');
+  const rollLbl = document.getElementById('popup-rot-roll-label');
+  if (rollLbl) rollLbl.innerText = getTranslation('rotRoll');
+
+  // Mission K: reset button labels
+  const resetPosBtn = document.getElementById('reset-position-btn');
+  if (resetPosBtn) resetPosBtn.innerHTML = '&#8634; ' + getTranslation('resetPosition');
+  const resetRotBtn = document.getElementById('reset-rotation-btn');
+  if (resetRotBtn) resetRotBtn.innerHTML = '&#8634; ' + getTranslation('resetRotation');
+  const resetScaleBtn = document.getElementById('reset-scale-btn');
+  if (resetScaleBtn) resetScaleBtn.innerHTML = '&#8634; ' + getTranslation('resetScale');
+
   const animLbl = document.getElementById('popup-anim-label');
   if (animLbl) animLbl.innerText = getTranslation('animate').toUpperCase();
   const animPrevBtn = document.getElementById('anim-preview-btn');
@@ -934,6 +1118,60 @@ function _localizePopup() {
   });
 }
 _localizePopup();
+
+// ---- Mission K (v3.0): Collapsible section accordion + status display ----
+function _updateRotateStatusFromObject() {
+  const status = document.getElementById('popup-rotate-status');
+  if (!status || !selectedObject) { if (status) status.innerText = ''; return; }
+  const rad2deg = (r) => Math.round(r * 180 / Math.PI);
+  const rx = rad2deg(selectedObject.rotation.x);
+  const ry = rad2deg(selectedObject.rotation.y);
+  const rz = rad2deg(selectedObject.rotation.z);
+  if (rx === 0 && ry === 0 && rz === 0) {
+    status.innerText = '';
+  } else {
+    status.innerText = `(${rx}°, ${ry}°, ${rz}°)`;
+  }
+}
+function _updateMoveStatusFromObject() {
+  const status = document.getElementById('popup-move-status');
+  if (!status || !selectedObject) { if (status) status.innerText = ''; return; }
+  const px = selectedObject.position.x;
+  const py = selectedObject.position.y;
+  const pz = selectedObject.position.z;
+  if (Math.abs(px) < 0.01 && Math.abs(py) < 0.01 && Math.abs(pz) < 0.01) {
+    status.innerText = '';
+  } else {
+    status.innerText = `(${px.toFixed(1)}, ${py.toFixed(1)}, ${pz.toFixed(1)})`;
+  }
+}
+function _updateResizeStatusFromObject() {
+  const status = document.getElementById('popup-resize-status');
+  if (!status || !selectedObject) { if (status) status.innerText = ''; return; }
+  const sx = selectedObject.scale.x;
+  const sy = selectedObject.scale.y;
+  const sz = selectedObject.scale.z;
+  if (Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01 && Math.abs(sz - 1) < 0.01) {
+    status.innerText = '';
+  } else {
+    status.innerText = `(${sx.toFixed(1)}, ${sy.toFixed(1)}, ${sz.toFixed(1)})`;
+  }
+}
+function _updateAllPopupStatuses() {
+  _updateMoveStatusFromObject();
+  _updateRotateStatusFromObject();
+  _updateResizeStatusFromObject();
+}
+// Wire collapsible headers
+document.querySelectorAll('.popup-section-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const section = header.closest('.popup-section');
+    if (!section) return;
+    section.classList.toggle('collapsed');
+    const chevron = header.querySelector('.popup-section-chevron');
+    if (chevron) chevron.innerHTML = section.classList.contains('collapsed') ? '&#9656;' : '&#9662;';
+  });
+});
 
 const popupSliders = objectPopup.querySelectorAll('input[type="range"]');
 const sliderBaseValues = {};
@@ -989,6 +1227,27 @@ objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
   });
 });
 
+// ---- Mission K (v3.0): Rotation sliders ----
+// Same delta-on-mousedown pattern as position/scale, but values are degrees.
+// Internal storage stays in radians (Three.js native).
+objectPopup.querySelectorAll('[data-type="rotation"]').forEach(slider => {
+  slider.addEventListener('mousedown', () => {
+    if (!selectedObject) return;
+    sliderBaseValues['rot_' + slider.dataset.axis] = selectedObject.rotation[slider.dataset.axis];
+    slider.value = 0;
+  });
+  slider.addEventListener('input', () => {
+    if (!selectedObject) return;
+    const axis = slider.dataset.axis;
+    const base = sliderBaseValues['rot_' + axis] || 0;
+    // Slider is in degrees, Three.js wants radians.
+    const deltaRad = parseFloat(slider.value) * (Math.PI / 180);
+    selectedObject.rotation[axis] = base + deltaRad;
+    _updateRotateStatusFromObject();
+    markSceneModified();
+  });
+});
+
 const _popupDeleteEl = document.getElementById('popup-delete');
 _popupDeleteEl.addEventListener('click', () => {
   deleteSelection();
@@ -1003,6 +1262,18 @@ document.getElementById('reset-position-btn').addEventListener('click', () => {
     slider.value = 0;
   });
   updateTransformUI();
+  _updateMoveStatusFromObject();
+  markSceneModified();
+});
+
+// Mission K (v3.0): Reset Rotation
+document.getElementById('reset-rotation-btn').addEventListener('click', () => {
+  if (!selectedObject) return;
+  selectedObject.rotation.set(0, 0, 0);
+  objectPopup.querySelectorAll('[data-type="rotation"]').forEach(slider => {
+    slider.value = 0;
+  });
+  _updateRotateStatusFromObject();
   markSceneModified();
 });
 
@@ -1013,6 +1284,7 @@ document.getElementById('reset-scale-btn').addEventListener('click', () => {
     slider.value = 0;
   });
   updateTransformUI();
+  _updateResizeStatusFromObject();
   markSceneModified();
 });
 
@@ -1936,8 +2208,11 @@ recordBtn.addEventListener('click', async () => {
       console.log('Saved to', result.filePath);
       pipelineState.mp4Path = result.filePath;
       pipelineState.mp4Filename = result.filePath.split(/[\\/]/).pop();
+      // Mission J (v3.0): bump version so downstream nodes can detect they're stale
+      pipelineState.mp4Version = (pipelineState.mp4Version || 0) + 1;
       const _s1c = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
       if (_s1c) _s1c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${pipelineState.mp4Filename}</div>`;
+      refreshStaleChips();
       activateStep('frame');
     } else {
       if (result.message !== 'Canceled by user') {
@@ -1998,18 +2273,33 @@ stopBtn.addEventListener('click', () => {
 
 // ---- Camera Animation Setup ----
 // Mission C: inject Dolly Zoom radio into the camera-type group
+// Mission L (v3.0): added Phosphor icon + .btn-label span + tooltip to match the other 5 presets
 (function injectDollyZoomRadio() {
   const group = document.getElementById('cam-move-radios');
   if (!group || document.getElementById('cam-dolly-zoom')) return;
+
   const input = document.createElement('input');
   input.type = 'radio';
   input.id = 'cam-dolly-zoom';
   input.name = 'camType';
   input.value = 'dollyZoom';
+
   const lbl = document.createElement('label');
   lbl.setAttribute('for', 'cam-dolly-zoom');
-  lbl.setAttribute('data-i18n', 'dollyZoom');
-  lbl.innerText = getTranslation('dollyZoom');
+  lbl.title = 'Background compresses while subject stays fixed';
+
+  // Phosphor icon — converging horizontal arrows visually convey the dolly-zoom effect
+  const icon = document.createElement('i');
+  icon.className = 'ph ph-arrows-in-line-horizontal';
+  lbl.appendChild(icon);
+
+  // Label span (i18n-aware, matches the markup of the other 5 presets in index.html)
+  const span = document.createElement('span');
+  span.className = 'btn-label';
+  span.setAttribute('data-i18n', 'dollyZoom');
+  span.innerText = getTranslation('dollyZoom');
+  lbl.appendChild(span);
+
   group.appendChild(input);
   group.appendChild(lbl);
 })();
@@ -3580,21 +3870,30 @@ async function saveScene(saveAs = false) {
       activeSteps: [...(pipelineState.activeSteps || [])],
       mp4Path: pipelineState.mp4Path,
       mp4Filename: pipelineState.mp4Filename,
+      mp4Version: pipelineState.mp4Version || 0,
       referenceFrame: pipelineState.referenceFrame,
       referenceFrameTimestamp: pipelineState.referenceFrameTimestamp,
       referenceFrameImage: pipelineState.referenceFrameImage,
+      frameVersion: pipelineState.frameVersion || 0,
+      frameSourceMp4Version: pipelineState.frameSourceMp4Version || 0,
       nanobananaPrompt: pipelineState.nanobananaPrompt,
       nanobananaReferenceImages: [...(pipelineState.nanobananaReferenceImages || [])],
       nanobananaResultImage: pipelineState.nanobananaResultImage,
       nanobananaSkipped: pipelineState.nanobananaSkipped,
+      nanobananaVersion: pipelineState.nanobananaVersion || 0,
+      nanobananaSourceFrameVersion: pipelineState.nanobananaSourceFrameVersion || 0,
       seedancePrompt: pipelineState.seedancePrompt,
       seedanceReferenceImage: pipelineState.seedanceReferenceImage,
       seedanceResultVideo: pipelineState.seedanceResultVideo,
       seedanceSkipped: pipelineState.seedanceSkipped,
+      seedanceVersion: pipelineState.seedanceVersion || 0,
+      seedanceSourceNanobananaVersion: pipelineState.seedanceSourceNanobananaVersion || 0,
       upscalePrompt: pipelineState.upscalePrompt,
       upscaleResolution: pipelineState.upscaleResolution,
       upscaleResult: pipelineState.upscaleResult,
-      upscaleSkipped: pipelineState.upscaleSkipped
+      upscaleSkipped: pipelineState.upscaleSkipped,
+      upscaleVersion: pipelineState.upscaleVersion || 0,
+      upscaleSourceSeedanceVersion: pipelineState.upscaleSourceSeedanceVersion || 0
     },
 
     counters: {
@@ -3916,6 +4215,17 @@ async function loadScene(filePath) {
     pipelineState.upscaleResolution        = p.upscaleResolution || '4k';
     pipelineState.upscaleResult            = p.upscaleResult || null;
     pipelineState.upscaleSkipped           = !!p.upscaleSkipped;
+
+    // Mission J (v3.0): version counters — default to 0 for legacy .ent files
+    pipelineState.mp4Version                       = p.mp4Version || 0;
+    pipelineState.frameVersion                     = p.frameVersion || 0;
+    pipelineState.frameSourceMp4Version            = p.frameSourceMp4Version || 0;
+    pipelineState.nanobananaVersion                = p.nanobananaVersion || 0;
+    pipelineState.nanobananaSourceFrameVersion     = p.nanobananaSourceFrameVersion || 0;
+    pipelineState.seedanceVersion                  = p.seedanceVersion || 0;
+    pipelineState.seedanceSourceNanobananaVersion  = p.seedanceSourceNanobananaVersion || 0;
+    pipelineState.upscaleVersion                   = p.upscaleVersion || 0;
+    pipelineState.upscaleSourceSeedanceVersion     = p.upscaleSourceSeedanceVersion || 0;
 
     rebuildSimplePanel();
     buildNodeEditor();
@@ -4492,20 +4802,30 @@ function onNanobananaComplete(imagePath) {
 function resetPipeline() {
   pipelineState.mp4Path = null;
   pipelineState.mp4Filename = null;
+  pipelineState.mp4Version = 0;
   pipelineState.referenceFrame = null;
   pipelineState.referenceFrameImage = null;
+  pipelineState.referenceFrameTimestamp = null;
+  pipelineState.frameVersion = 0;
+  pipelineState.frameSourceMp4Version = 0;
   pipelineState.nanobananaPrompt = null;
   pipelineState.nanobananaReferenceImages = [];
   pipelineState.nanobananaResultImage = null;
   pipelineState.nanobananaSkipped = false;
+  pipelineState.nanobananaVersion = 0;
+  pipelineState.nanobananaSourceFrameVersion = 0;
   pipelineState.seedancePrompt = null;
   pipelineState.seedanceReferenceImage = null;
   pipelineState.seedanceResultVideo = null;
   pipelineState.seedanceSkipped = false;
+  pipelineState.seedanceVersion = 0;
+  pipelineState.seedanceSourceNanobananaVersion = 0;
   pipelineState.upscalePrompt = null;
   pipelineState.upscaleResolution = '4k';
   pipelineState.upscaleResult = null;
   pipelineState.upscaleSkipped = false;
+  pipelineState.upscaleVersion = 0;
+  pipelineState.upscaleSourceSeedanceVersion = 0;
   pipelineState.currentStep = 0;
   rebuildSimplePanel();
   buildNodeEditor();
@@ -5681,6 +6001,10 @@ function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
   container.querySelector('.nb-keep-btn')?.addEventListener('click', () => {
     pipelineState.nanobananaResultImage = imagePath;
     pipelineState.seedanceReferenceImage = imagePath;
+    // Mission J (v3.0): commit the Nanobanana output as a new version
+    pipelineState.nanobananaVersion = (pipelineState.nanobananaVersion || 0) + 1;
+    pipelineState.nanobananaSourceFrameVersion = pipelineState.frameVersion || 0;
+    refreshStaleChips();
 
     // Auto-fill seedance reference area in Simple Mode
     const sdRefArea = document.getElementById('sd-ref-image-area');
@@ -5768,6 +6092,10 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
   }
   container.querySelector('.sd-keep-btn')?.addEventListener('click', () => {
     pipelineState.seedanceResultVideo = videoPath;
+    // Mission J (v3.0): commit the Seedance output as a new version
+    pipelineState.seedanceVersion = (pipelineState.seedanceVersion || 0) + 1;
+    pipelineState.seedanceSourceNanobananaVersion = pipelineState.nanobananaVersion || 0;
+    refreshStaleChips();
 
     document.querySelectorAll('.sd-result-actions').forEach(row => {
       row.innerHTML = `
@@ -5843,6 +6171,9 @@ function wireStepCardInteractions(card, step) {
           });
           if (result && result.success && result.framePath) {
             pipelineState.referenceFrameImage = result.framePath;
+            // Mission J (v3.0): bump frame version + record the MP4 version it came from
+            pipelineState.frameVersion = (pipelineState.frameVersion || 0) + 1;
+            pipelineState.frameSourceMp4Version = pipelineState.mp4Version || 0;
             const imgUrl = _toMediaUrl(result.framePath);
             const frameThumbHTML = `
                 <div style="position:relative;padding:6px;">
@@ -5869,6 +6200,7 @@ function wireStepCardInteractions(card, step) {
               wireThumbClick(frameNodeBody);
             }
             updateNanobananaFramePreview();
+            refreshStaleChips();
             markSceneModified();
           } else {
             showToast((result && result.error) || 'Could not extract frame.');
@@ -6702,6 +7034,9 @@ function buildNodeEditor() {
         });
         if (result && result.success && result.framePath) {
           pipelineState.referenceFrameImage = result.framePath;
+          // Mission J (v3.0): bump frame version + record the MP4 version it came from
+          pipelineState.frameVersion = (pipelineState.frameVersion || 0) + 1;
+          pipelineState.frameSourceMp4Version = pipelineState.mp4Version || 0;
           const imgUrl = _toMediaUrl(result.framePath);
           const thumbHTML = `
             <div style="position:relative;padding:6px;">
@@ -6717,6 +7052,7 @@ function buildNodeEditor() {
           const nb = document.querySelector('.node-card[data-node="frame"] .node-body');
           if (nb) { nb.innerHTML = `<div class="node-content">${thumbHTML}</div>`; wireThumb(nb); }
           updateNanobananaFramePreview();
+          refreshStaleChips();
           markSceneModified();
         } else {
           showToast((result && result.error) || 'Could not extract frame.');

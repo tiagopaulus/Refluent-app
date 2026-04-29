@@ -989,6 +989,107 @@ button:active {
   accent-color: #888;
 }
 
+/* Mission K (v3.0): Collapsible sections in object popup */
+.popup-section {
+  margin: 6px 0;
+}
+.popup-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 2px;
+  user-select: none;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+.popup-section-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.popup-section-chevron {
+  font-size: 9px;
+  color: var(--text-secondary, #888);
+  width: 10px;
+  flex-shrink: 0;
+  transition: transform 0.12s;
+}
+.popup-section-title {
+  font-size: 11px;
+  color: #777;
+  flex-shrink: 0;
+}
+.popup-section-status {
+  font-size: 10px;
+  color: #555;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.popup-section-body {
+  padding: 4px 0 6px 0;
+  overflow: hidden;
+}
+.popup-section.collapsed .popup-section-body {
+  display: none;
+}
+.popup-section .popup-reset-btn {
+  width: 100%;
+  margin: 4px 0 0 0;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #666;
+  font-size: 11px;
+  padding: 5px;
+  cursor: pointer;
+}
+.popup-section .popup-reset-btn:hover {
+  background: #222;
+  color: #888;
+}
+
+/* Mission J2 (v3.0): Replace button + staleness chip in step/node card headers */
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.replace-btn {
+  background: transparent;
+  border: 1px solid var(--border, #2a3340);
+  border-radius: 3px;
+  color: var(--text-secondary, #7a8694);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.12s;
+  user-select: none;
+}
+.replace-btn:hover {
+  border-color: var(--accent, #4a9fa5);
+  color: var(--accent-bright, #6dc4ca);
+  background: var(--accent-glow, rgba(74,159,165,0.15));
+}
+.stale-chip {
+  background: rgba(220, 170, 60, 0.12);
+  border: 1px solid rgba(220, 170, 60, 0.35);
+  color: #d4a73c;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: help;
+  user-select: none;
+}
+.stale-chip.hidden {
+  display: none;
+}
+
 /* Mission F - Layers panel */
 #layers-panel {
   position: absolute;
