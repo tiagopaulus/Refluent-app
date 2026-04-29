@@ -326,6 +326,19 @@ function wireReplaceButtons(scope) {
   });
 }
 
+// Mission J2 (v3.0): does a stage have committed output? Controls whether
+// the Replace button renders. The chip is independent (only renders when stale).
+function _stepHasContent(stepKey) {
+  switch (stepKey) {
+    case 'mp4':        return !!pipelineState.mp4Path;
+    case 'frame':      return !!pipelineState.referenceFrameImage;
+    case 'nanobanana': return !!pipelineState.nanobananaResultImage;
+    case 'seedance':   return !!pipelineState.seedanceResultVideo;
+    case 'upscale':    return !!pipelineState.upscaleResult;
+    default: return false;
+  }
+}
+
 // ---- Scene Setup ----
 const container = document.getElementById('viewport');
 debug('Container element: ' + (container ? 'FOUND' : 'NULL'));
@@ -5148,12 +5161,16 @@ function _bodyForStep(step) {
 function buildStepCardHTML(step) {
   const label = getTranslation(step.i18nKey) || step.fallback;
   const skipBtn = step.skippable ? '<button class="step-skip-btn" title="Toggle skip">Skip</button>' : '';
+  // Mission J2 (v3.0): Replace button + stale chip in card header
+  const hasContent = _stepHasContent(step.key);
+  const headerActions = buildCardHeaderActionsHTML(step.key, hasContent);
   return `
     <div class="step-header">
       <span class="step-name" data-i18n="${step.i18nKey}">${label}</span>
       <div style="display:flex;align-items:center;gap:4px;">
         <span class="step-status-dot"></span>
         ${skipBtn}
+        ${headerActions}
       </div>
     </div>
     <div class="step-body">${_bodyForStep(step)}</div>`;
@@ -6397,6 +6414,9 @@ function rebuildSimplePanel() {
   updateStepPositions();
   drawSimpleConnections();
   if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+  // Mission J2 (v3.0): wire Replace buttons + refresh stale chips after rebuild
+  wireReplaceButtons(document);
+  refreshStaleChips();
 }
 
 rebuildSimplePanel();
@@ -6870,13 +6890,19 @@ function updateNodeMediaPreviews() {
 }
 
 function _nodeCardHTML(id, title, subtitle, hasIn, hasOut, defaultContent) {
+  // Mission J2 (v3.0): Replace button + stale chip in node title bar
+  const hasContent = _stepHasContent(id);
+  const headerActions = buildCardHeaderActionsHTML(id, hasContent);
   return `
     <div class="node-card node-inactive" data-node="${id}">
       ${hasIn ? '<div class="node-port-in"></div>' : ''}
       ${hasOut ? '<div class="node-port-out"></div>' : ''}
       <div class="node-title-bar">
         <span>${title}${subtitle ? ` <span class="node-subtitle">${subtitle}</span>` : ''}</span>
-        <span class="node-status-dot"></span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span class="node-status-dot"></span>
+          ${headerActions}
+        </div>
       </div>
       <div class="node-body"><div class="node-content">${defaultContent || ''}</div></div>
     </div>`;
@@ -7190,6 +7216,9 @@ function buildNodeEditor() {
   initDefaultConnections();
   syncNodeEditor();
   if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+  // Mission J2 (v3.0): wire Replace buttons + refresh stale chips after rebuild
+  wireReplaceButtons(document);
+  refreshStaleChips();
 }
 
 buildNodeEditor();
