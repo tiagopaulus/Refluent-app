@@ -255,35 +255,47 @@ function getStaleNodes() {
   if (isUpscaleStale()) stale.push('upscale');
   return stale;
 }
-// Mission J2 (v3.0): refresh the yellow "outdated" chip visibility on every
-// node based on current staleness state. Called after any version bump.
+// Mission J2 (v3.0): refresh the yellow "outdated" chip + Replace button
+// visibility on every node based on current pipeline state. Called after any
+// version bump or stage commit.
 function refreshStaleChips() {
-  const map = {
+  const staleMap = {
     frame: isFrameStale(),
     nanobanana: isNanobananaStale(),
     seedance: isSeedanceStale(),
     upscale: isUpscaleStale()
   };
-  for (const [stepKey, stale] of Object.entries(map)) {
+  for (const [stepKey, stale] of Object.entries(staleMap)) {
     document.querySelectorAll(`[data-stale-chip-for="${stepKey}"]`).forEach(chip => {
       chip.classList.toggle('hidden', !stale);
     });
   }
+  // Replace button visibility tracks "does this stage have content" — it's
+  // always in the DOM, just hidden until the user has something to replace.
+  ['mp4', 'frame', 'nanobanana', 'seedance', 'upscale'].forEach(stepKey => {
+    const has = _stepHasContent(stepKey);
+    document.querySelectorAll(`[data-replace-for="${stepKey}"]`).forEach(btn => {
+      btn.classList.toggle('hidden', !has);
+    });
+  });
+  // Mission J4 (v3.0): also re-color stale connection lines in the Node Editor.
+  // Guard against early calls before redrawNodeConnections has been defined.
+  if (typeof redrawNodeConnections === 'function') redrawNodeConnections();
 }
 
 // Mission J2 (v3.0): build the header actions HTML (Replace button + stale chip).
-// Used by both the Simple Mode step cards and the Node Editor node cards.
-// stepKey: 'mp4' | 'frame' | 'nanobanana' | 'seedance' | 'upscale'
-// hasContent: whether the node currently has output (controls Replace visibility)
+// Both elements are ALWAYS rendered — visibility is toggled by refreshStaleChips()
+// based on current pipeline state. This way the buttons appear/disappear without
+// having to re-build the whole card.
 function buildCardHeaderActionsHTML(stepKey, hasContent) {
   const replaceLabel = (typeof getTranslation === 'function') ? getTranslation('replace') : 'Replace';
   const outdatedLabel = (typeof getTranslation === 'function') ? getTranslation('outdated') : 'outdated';
   const staleTooltip = (typeof getTranslation === 'function') ? getTranslation('staleTooltip') : 'Generated from a previous version';
-  const showReplace = hasContent && stepKey !== 'mp4-empty';
+  const replaceHiddenClass = hasContent ? '' : ' hidden';
   return `
     <div class="card-header-actions">
       <span class="stale-chip hidden" data-stale-chip-for="${stepKey}" title="${staleTooltip}">⚠ ${outdatedLabel}</span>
-      ${showReplace ? `<button class="replace-btn" data-replace-for="${stepKey}" title="${staleTooltip}">⟲ ${replaceLabel}</button>` : ''}
+      <button class="replace-btn${replaceHiddenClass}" data-replace-for="${stepKey}" title="${staleTooltip}">⟲ ${replaceLabel}</button>
     </div>
   `;
 }
@@ -306,8 +318,33 @@ function replaceStage(stepKey) {
     rebuildSimplePanel();
     buildNodeEditor();
     activateStep('frame');
+  } else if (stepKey === 'nanobanana') {
+    // Mission J3 (v3.0): clear the styled image but PRESERVE prompt + reference
+    // images so the user can tweak and regenerate without retyping.
+    pipelineState.nanobananaResultImage = null;
+    pipelineState.nanobananaSkipped = false;
+    // Also break the auto-fed link to Seedance — Seedance's "Visual Reference"
+    // was auto-filled from this output. Clear it so the user is forced to
+    // regenerate or pick a different image.
+    pipelineState.seedanceReferenceImage = null;
+    rebuildSimplePanel();
+    buildNodeEditor();
+    activateStep('nanobanana');
+  } else if (stepKey === 'seedance') {
+    // Mission J3 (v3.0): clear the rendered video but preserve prompt.
+    pipelineState.seedanceResultVideo = null;
+    pipelineState.seedanceSkipped = false;
+    rebuildSimplePanel();
+    buildNodeEditor();
+    activateStep('seedance');
+  } else if (stepKey === 'upscale') {
+    // Mission J3 (v3.0): clear the upscaled output but preserve prompt + resolution.
+    pipelineState.upscaleResult = null;
+    pipelineState.upscaleSkipped = false;
+    rebuildSimplePanel();
+    buildNodeEditor();
+    activateStep('upscale');
   }
-  // J3 will add nanobanana / seedance / upscale handlers
   refreshStaleChips();
   markSceneModified();
 }
@@ -5161,17 +5198,21 @@ function _bodyForStep(step) {
 function buildStepCardHTML(step) {
   const label = getTranslation(step.i18nKey) || step.fallback;
   const skipBtn = step.skippable ? '<button class="step-skip-btn" title="Toggle skip">Skip</button>' : '';
-  // Mission J2 (v3.0): Replace button + stale chip in card header
-  const hasContent = _stepHasContent(step.key);
-  const headerActions = buildCardHeaderActionsHTML(step.key, hasContent);
+  // Mission J2 (v3.0): Replace button + stale chip rendered in step header.
+  // Note: headerActions is placed at the same flex level as step-name (NOT
+  // nested inside the right-side wrapper), so its margin-left:auto pushes it
+  // correctly. The status dot + Skip stay in the inline wrapper to keep their
+  // original tight layout. (stepDefs uses `id`, not `key`.)
+  const hasContent = _stepHasContent(step.id);
+  const headerActions = buildCardHeaderActionsHTML(step.id, hasContent);
   return `
     <div class="step-header">
       <span class="step-name" data-i18n="${step.i18nKey}">${label}</span>
       <div style="display:flex;align-items:center;gap:4px;">
         <span class="step-status-dot"></span>
         ${skipBtn}
-        ${headerActions}
       </div>
+      ${headerActions}
     </div>
     <div class="step-body">${_bodyForStep(step)}</div>`;
 }
@@ -6658,7 +6699,16 @@ function redrawNodeConnections() {
     // Visible path
     const visPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     visPath.setAttribute('d', dStr);
-    visPath.setAttribute('stroke', isSelected ? '#ffffff' : '#667');
+    // Mission J4 (v3.0): yellow connection line when the downstream node is stale.
+    // Selected state still wins (white) so the user can always see what's selected.
+    const downstreamStale = (
+      (conn.toNode === 'frame' && isFrameStale()) ||
+      (conn.toNode === 'nanobanana' && isNanobananaStale()) ||
+      (conn.toNode === 'seedance' && isSeedanceStale()) ||
+      (conn.toNode === 'upscale' && isUpscaleStale())
+    );
+    const baseStroke = downstreamStale ? '#d4a73c' : '#667';
+    visPath.setAttribute('stroke', isSelected ? '#ffffff' : baseStroke);
     visPath.setAttribute('stroke-width', isSelected ? '2' : '1.5');
     visPath.setAttribute('fill', 'none');
     visPath.setAttribute('opacity', isSelected ? '1' : '0.7');

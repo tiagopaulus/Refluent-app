@@ -1053,6 +1053,7 @@ button:active {
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 .replace-btn {
   background: transparent;
