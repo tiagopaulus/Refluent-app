@@ -124,28 +124,28 @@ const PROMPT_TEMPLATES = {
   nanobanana: [
     {
       name: 'Studio Match',
-      description: 'Clean commercial studio — preserves camera angle exactly',
-      prompt: 'Using the reference images as the complete visual guide — adopt their full color palette, background, lighting atmosphere, materials and overall tone exactly as shown. Apply this visual world to the subject. Use the viewport reference frame ONLY to determine the correct camera angle, focal length, framing, proportions and aspect ratio. Do not use the viewport frame for color, background or style — only for spatial composition and camera position.'
+      description: 'Clean commercial studio aesthetic',
+      prompt: 'Render in the visual world of the style reference: its color palette, lighting setup, materials, and atmosphere. Aim for a clean, polished commercial photography look — sharp focus, considered composition, high production value.'
     },
     {
       name: 'Cinematic Grade',
-      description: 'Cinematic quality — full reference image atmosphere',
-      prompt: 'Fully adopt the visual language of the reference images — their color grading, background environment, lighting mood, material quality and cinematic atmosphere. Recreate this complete visual world at the camera angle, framing and proportions shown in the viewport reference frame. The viewport frame defines ONLY the spatial composition and camera position — all visual style, background and tone must come from the reference images.'
+      description: 'Moody, color-graded, dramatic light',
+      prompt: 'Render in a cinematic style: moody color grading, dramatic directional lighting, rich atmospheric depth, and the visual language of a still from a high-end film. Match the color palette, lighting character, and overall mood of the style reference.'
     },
     {
       name: 'Product Hero',
-      description: 'Premium product photography — reference image environment',
-      prompt: 'Take the complete visual environment from the reference images — background, lighting setup, color palette, material finish and overall atmosphere — and apply it faithfully. Use the viewport reference frame exclusively to determine the camera angle, scale, proportions and framing of the subject. The reference images define the entire visual world. The viewport frame defines only the camera position and spatial layout.'
+      description: 'Premium product photography',
+      prompt: 'Render as premium product photography: hero subject, dramatic but flattering lighting, lush environmental staging, and a sense of luxury and craft. Match the materials, palette, and atmosphere of the style reference.'
     },
     {
       name: 'Editorial',
-      description: 'High-fashion editorial — full reference image tone',
-      prompt: 'Adopt the complete editorial visual world shown in the reference images — their color treatment, background, lighting character, texture and atmosphere. Apply this entire visual environment to the composition. Use the viewport reference frame only to establish the correct camera angle, framing, proportions and aspect ratio. Do not derive any color, background or stylistic information from the viewport frame.'
+      description: 'High-fashion editorial tone',
+      prompt: 'Render in a high-fashion editorial style: refined color treatment, intentional lighting, considered texture and material work, and the polished atmosphere of a magazine spread. Adopt the tone, palette, and visual mood of the style reference.'
     },
     {
       name: 'Neutral Reference',
-      description: 'Faithful to reference image — accurate camera from viewport',
-      prompt: 'Faithfully reproduce the complete visual environment of the reference images — including their background, color palette, lighting and overall tone — with maximum accuracy. Use the viewport reference frame solely to determine the camera angle, focal length, subject proportions and spatial composition. The reference images are the complete style guide. The viewport frame is the camera guide only.'
+      description: 'Faithful match to style reference',
+      prompt: 'Render with maximum fidelity to the style reference\'s visual world — its color palette, lighting, materials, environment, and overall tone. Prioritize matching the reference\'s atmosphere over any other stylistic choice.'
     }
   ],
   seedance: [
@@ -356,6 +356,9 @@ function wireReplaceButtons(scope) {
   scope.querySelectorAll('.replace-btn[data-replace-for]').forEach(btn => {
     if (btn.dataset.wired === '1') return;
     btn.dataset.wired = '1';
+    // Mission 1 (v3.0): swallow mousedown so the parent .node-title-bar drag
+    // handler doesn't start a drag when the user clicks Replace.
+    btn.addEventListener('mousedown', (e) => e.stopPropagation());
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       replaceStage(btn.dataset.replaceFor);
@@ -5742,6 +5745,145 @@ window.addEventListener('beforeunload', () => {
   _stopUpscalePoller();
 });
 
+// Mission 2.3 (v3.0): scan the MP4 reference frame for non-black pixels and
+// compute the subject's bounding box as percentages. Sent to the adapter so
+// the prompt can give Gemini hard numerical anchors instead of soft language.
+//
+// Returns { x, y, w, h } where each is a percentage 0-100, or null if the
+// frame couldn't be loaded or the canvas is empty/all-black.
+async function computeSubjectBoundingBox(framePath) {
+  if (!framePath) return null;
+  try {
+    // Use _toMediaUrl so the file:// protocol is correct for the <img> tag
+    const fileUrl = _toMediaUrl(framePath);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Frame image failed to load'));
+      i.src = fileUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    // Threshold: any pixel with R+G+B > 30 counts as "subject".
+    // Blockouts are mid-gray (~128); pure black background is 0; this catches
+    // the subject reliably without false positives from JPEG noise.
+    const THRESHOLD = 30;
+    let minX = canvas.width, minY = canvas.height, maxX = -1, maxY = -1;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        const sum = data[i] + data[i + 1] + data[i + 2];
+        if (sum > THRESHOLD) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return null; // no subject found (all black)
+    const xPct = (minX / canvas.width) * 100;
+    const yPct = (minY / canvas.height) * 100;
+    const wPct = ((maxX - minX) / canvas.width) * 100;
+    const hPct = ((maxY - minY) / canvas.height) * 100;
+    return {
+      x: Math.round(xPct),
+      y: Math.round(yPct),
+      w: Math.round(wPct),
+      h: Math.round(hPct)
+    };
+  } catch (e) {
+    console.warn('[Mission 2.3] Could not compute subject bounding box:', e.message);
+    return null;
+  }
+}
+
+// Mission 2.4 (v3.0): generate a padded version of the blockout canvas where
+// the dark/empty space is filled with neutral mid-gray noise. This makes the
+// canvas a "full-frame composition" that competes equally with reference
+// images for Gemini's attention. Without this, references' rich full-bleed
+// composition out-signals the canvas's sparse subject-on-black layout, and
+// the model falls back to the reference's composition (centering the subject).
+//
+// Returns a base64 data URL (data:image/png;base64,...) which the IPC layer
+// will pass to the adapter. The original frame on disk is untouched.
+async function buildPaddedCanvasDataUrl(framePath) {
+  if (!framePath) return null;
+  try {
+    const fileUrl = _toMediaUrl(framePath);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Frame image failed to load'));
+      i.src = fileUrl;
+    });
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // Step 1: fill with mid-gray base so the frame is no longer "mostly black"
+    ctx.fillStyle = '#5a5a5a';
+    ctx.fillRect(0, 0, W, H);
+
+    // Step 2: add subtle noise so the area reads as a textured surface
+    // rather than flat color (flat color is a weaker spatial signal)
+    const noise = ctx.getImageData(0, 0, W, H);
+    const nd = noise.data;
+    for (let i = 0; i < nd.length; i += 4) {
+      const v = (Math.random() * 30) - 15; // ±15 brightness jitter
+      nd[i]     = Math.max(0, Math.min(255, nd[i]     + v));
+      nd[i + 1] = Math.max(0, Math.min(255, nd[i + 1] + v));
+      nd[i + 2] = Math.max(0, Math.min(255, nd[i + 2] + v));
+    }
+    ctx.putImageData(noise, 0, 0);
+
+    // Step 3: add a soft horizontal gradient to imply a ground plane,
+    // giving the model a hint that the subject is sitting on a surface.
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0,   'rgba(40, 40, 40, 0.55)');
+    grad.addColorStop(0.5, 'rgba(40, 40, 40, 0)');
+    grad.addColorStop(1,   'rgba(0, 0, 0, 0.45)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Step 4: composite the original blockout on top, but only its non-black
+    // pixels (the subject). This preserves position, size, rotation, silhouette.
+    const tmp = document.createElement('canvas');
+    tmp.width = W;
+    tmp.height = H;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(img, 0, 0);
+    const src = tctx.getImageData(0, 0, W, H);
+    const sd = src.data;
+    const out = ctx.getImageData(0, 0, W, H);
+    const od = out.data;
+    const THRESHOLD = 30; // same threshold as bbox detection
+    for (let i = 0; i < sd.length; i += 4) {
+      const sum = sd[i] + sd[i + 1] + sd[i + 2];
+      if (sum > THRESHOLD) {
+        // Subject pixel — copy it onto the padded canvas
+        od[i]     = sd[i];
+        od[i + 1] = sd[i + 1];
+        od[i + 2] = sd[i + 2];
+        od[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(out, 0, 0);
+
+    return canvas.toDataURL('image/png');
+  } catch (e) {
+    console.warn('[Mission 2.4] Could not build padded canvas:', e.message);
+    return null;
+  }
+}
+
 async function runNanobananaGenerate(scope) {
   if (nanobananaInFlight) return;
   if (!_syncPromptFromDom('nanobanana')) {
@@ -5753,12 +5895,25 @@ async function runNanobananaGenerate(scope) {
   try {
     const ratioSelect = document.getElementById('ratio-select');
     const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
+    // Mission 2.3 (v3.0): measure the subject's bounding box before sending
+    const subjectBox = await computeSubjectBoundingBox(pipelineState.referenceFrameImage);
+    // Mission 2.4 (v3.0): build a "padded canvas" — same subject, but the empty
+    // space is filled with neutral noise/gradient so the canvas presents a
+    // full-frame composition. This prevents references from out-signaling the
+    // canvas's sparse layout. Only sent when there's at least one reference
+    // image; without references, the original sparse canvas works perfectly.
+    const hasRefs = pipelineState.nanobananaReferenceImages.filter(Boolean).length > 0;
+    const paddedCanvasDataUrl = hasRefs
+      ? await buildPaddedCanvasDataUrl(pipelineState.referenceFrameImage)
+      : null;
     const job = await window.electronAPI.aiImageGenerate({
       prompt: pipelineState.nanobananaPrompt,
       referenceFramePath: pipelineState.referenceFrameImage || null,
       referenceImages: pipelineState.nanobananaReferenceImages.filter(Boolean),
       saveFolder: localStorage.getItem('refluent_mp4_folder') || null,
-      aspectRatio: currentRatio
+      aspectRatio: currentRatio,
+      subjectBox,
+      paddedCanvasDataUrl
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Generation failed. Please try again.');
@@ -6905,7 +7060,31 @@ function makeNodeDraggable(nodeEl) {
     const dy = (e.clientY - startMouseY) / s;
     nodeBasePositions[nodeId].x = startWorldX + dx;
     nodeBasePositions[nodeId].y = startWorldY + dy;
-    const screen = worldToScreen(nodeBasePositions[nodeId].x, nodeBasePositions[nodeId].y);
+    let screen = worldToScreen(nodeBasePositions[nodeId].x, nodeBasePositions[nodeId].y);
+
+    // Mission 1 (v3.0): clip node cards to the Node Editor pane bounds so
+    // they can't drift into the viewport on the left.
+    const editorPane = nodeEl.parentElement;
+    if (editorPane) {
+      const paneRect = editorPane.getBoundingClientRect();
+      const nodeRect = nodeEl.getBoundingClientRect();
+      const margin = 8; // small visual breathing room from the edge
+      const minX = margin;
+      const minY = margin;
+      const maxX = paneRect.width - nodeRect.width - margin;
+      const maxY = paneRect.height - nodeRect.height - margin;
+      const clampedX = Math.max(minX, Math.min(maxX, screen.x));
+      const clampedY = Math.max(minY, Math.min(maxY, screen.y));
+      // If we clamped, project back to world space so the stored position
+      // matches what's rendered — otherwise the next drag would "snap" forward.
+      if (clampedX !== screen.x || clampedY !== screen.y) {
+        // Inverse of worldToScreen: (screen - offset) / scale
+        nodeBasePositions[nodeId].x = (clampedX - nodeEditorState.offsetX) / s;
+        nodeBasePositions[nodeId].y = (clampedY - nodeEditorState.offsetY) / s;
+        screen = { x: clampedX, y: clampedY };
+      }
+    }
+
     nodeEl.style.left = screen.x + 'px';
     nodeEl.style.top = screen.y + 'px';
     redrawNodeConnections();

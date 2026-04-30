@@ -463,7 +463,9 @@ ipcMain.handle('ai-image-generate', async (_event, args) => {
   try {
     // Back-compat: legacy callers passed a single `referenceImagePath`.
     const refs = args.referenceImages || (args.referenceImagePath ? [args.referenceImagePath] : []);
-    return { success: true, ...(await imageProvider.generate(args.prompt, args.referenceFramePath, refs, args.saveFolder || null, args.aspectRatio || '16:9')) };
+    // Mission 2.3 (v3.0): forward the renderer's measured subjectBox to the adapter.
+    // Mission 2.4 (v3.0): also forward paddedCanvasDataUrl when present.
+    return { success: true, ...(await imageProvider.generate(args.prompt, args.referenceFramePath, refs, args.saveFolder || null, args.aspectRatio || '16:9', args.subjectBox || null, args.paddedCanvasDataUrl || null)) };
   } catch (err) {
     console.error('[Nanobanana] Error:', err && err.message);
     return { success: false, error: 'Image generation failed. Please try again.' };
