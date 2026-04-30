@@ -8,13 +8,35 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// Mission 2.7 follow-up: override undici's internal headers/body timeouts.
+// Node's global fetch (used by @google/genai under the hood) defaults to
+// ~5 min headersTimeout — Pro image generation can blow past that before
+// the response starts streaming. SDK's httpOptions.timeout doesn't reach
+// undici's internal timers, only the outer AbortSignal. The only way to
+// extend the headers timer is via a custom undici Agent set globally.
+try {
+  const { setGlobalDispatcher, Agent } = require('undici');
+  setGlobalDispatcher(new Agent({
+    headersTimeout: 900_000,  // 15 min
+    bodyTimeout: 900_000,
+    connectTimeout: 30_000
+  }));
+} catch (e) {
+  // undici is bundled with Node, but if for some reason it's not
+  // accessible (e.g. very old runtime), the SDK keeps working with defaults.
+  console.warn('[Nanobanana] undici not available — keeping default fetch timeouts');
+}
+
 let _client = null;
 
 function getClient() {
   if (_client) return _client;
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY not found in environment');
-  _client = new GoogleGenAI({ apiKey: key });
+  // Mission 2.7 (v3.0): bump HTTP timeout to 10 minutes — Pro image generation
+  // can take long enough that the SDK's default headers-timeout window
+  // (UND_ERR_HEADERS_TIMEOUT) trips before the response starts streaming.
+  _client = new GoogleGenAI({ apiKey: key, httpOptions: { timeout: 600_000 } });
   return _client;
 }
 
@@ -41,6 +63,7 @@ const NanobananaAdapter = {
     this._jobs[jobId] = { status: 'pending' };
     this._runGeneration(jobId, prompt, referenceFramePath, referenceImages, saveFolder, aspectRatio, subjectBox, paddedCanvasDataUrl)
       .catch(err => {
+        console.error('[Nanobanana raw error]', err);
         const msg = (err && err.message) || '';
         console.error('[Nanobanana] generation error:', msg);
         if (msg.includes('limit: 0') || msg.includes('RESOURCE_EXHAUSTED')) {
@@ -84,12 +107,11 @@ const NanobananaAdapter = {
     if (hasStyleRefs) {
       contents.push({
         text:
-          `STYLE REFERENCE${validRefs.length > 1 ? 'S' : ''} (ambient context only).\n` +
-          `The following image${validRefs.length > 1 ? 's are' : ' is'} provided ONLY as a source of ` +
-          `visual style: lighting, color palette, texture, materials, mood, and overall atmosphere.\n` +
-          `DO NOT use ${validRefs.length > 1 ? 'them' : 'it'} as the canvas. ` +
-          `DO NOT preserve ${validRefs.length > 1 ? 'their' : 'its'} composition, subjects, framing, or layout. ` +
-          `DO NOT return ${validRefs.length > 1 ? 'them' : 'it'} back with minor changes.`
+          `IMAGE 1 — VISUAL STYLE, MATERIAL, AND LIGHTING LOCKED.\n` +
+          `Match the hyperrealistic 3D rendering, material finishes, color grading, ` +
+          `lighting, atmosphere, and overall aesthetic of the following ` +
+          `image${validRefs.length > 1 ? 's' : ''} with precision. ` +
+          `All visual style decisions derive exclusively from ${validRefs.length > 1 ? 'these images' : 'this image'}.`
       });
       validRefs.forEach(p => {
         contents.push({
@@ -105,37 +127,13 @@ const NanobananaAdapter = {
     if (hasFrame) {
       contents.push({
         text:
-          'COMPOSITION CANVAS — STRICT LOCK.\n' +
-          'The following image is a 3D blockout. The gray shapes are THE SUBJECT. ' +
-          'Everything that is not gray (dark/black areas) is empty stage.\n\n' +
-          // Mission 2.5 (v3.0): bbox numerical anchors were removed after the
-          // 2.3 → diagnostic test confirmed they actively hurt placement. Gemini
-          // interprets the percentages as proportion hints rather than position
-          // hints and recenters accordingly. The visual canvas is a stronger
-          // anchor than text numbers for this model. Keeping the prompt
-          // directives below; they continue to do useful work.
-          'NON-NEGOTIABLE CONSTRAINTS — these must be matched 1:1, no exceptions:\n' +
-          '1. SUBJECT POSITION: the subject must occupy the same X/Y location in the output frame ' +
-          'as it does in this canvas. If the subject is in the upper-left third here, it must be ' +
-          'in the upper-left third in the output. If it is centered, it must be centered. ' +
-          'Do not recenter, do not reposition, do not "improve" the placement.\n' +
-          '2. SUBJECT SIZE: the subject must occupy the same percentage of frame width and ' +
-          'frame height as it does in this canvas. If it fills 50% of the frame height here, ' +
-          'it must fill 50% of the frame height in the output. Do not zoom in, do not zoom out, ' +
-          'do not resize.\n' +
-          '3. SUBJECT ROTATION & TILT: the subject\'s rotation, tilt, and orientation must match ' +
-          'this canvas exactly. Do not rotate, do not tilt, do not adjust the camera angle.\n' +
-          '4. SUBJECT SILHOUETTE & PROPORTIONS: the subject\'s shape and proportions must match ' +
-          'this canvas exactly. Do not stretch, squash, or alter the geometry.\n\n' +
-          'WHAT TO RENDER:\n' +
-          '• Replace the gray surfaces with realistic, fully rendered materials and finish.\n' +
-          '• The grayscale tone of the canvas is irrelevant — pick appropriate materials ' +
-          `${hasStyleRefs ? 'implied by the style reference above' : 'based on the user instruction below'}.\n` +
-          '• The dark/black space around the subject is FREE TERRITORY — invent the environment, ' +
-          `background, props, atmosphere, and lighting freely.${hasStyleRefs ? ' Use the style reference for direction.' : ''} ` +
-          'The output must look like a finished, hyper-realistic photograph — not a cutout on black.\n\n' +
-          'If you violate any of constraints 1–4, the output is a failure regardless of how ' +
-          'beautiful the rendering is. Match the canvas first, then style.'
+          `IMAGE 2 — CAMERA AND COMPOSITION LOCKED.\n` +
+          `The following image is a 3D clay blockout. Use it ONLY as a cinematography guide.\n` +
+          `Camera position, angle, focal length, subject placement, subject size, and subject ` +
+          `orientation must be a 1:1 match to this reference. ` +
+          `Do not recompose. Do not recenter. Do not resize. Do not rotate.\n` +
+          `Do not derive any visual aesthetic, material, lighting, or color from this image — ` +
+          `the gray clay appearance is irrelevant.`
       });
       // Mission 2.4 (v3.0): prefer the padded canvas if the renderer built one.
       // Padding is only built when there are reference images present, so this
@@ -172,13 +170,11 @@ const NanobananaAdapter = {
     let directive;
     if (hasFrame && hasStyleRefs) {
       directive =
-        `TASK: Render the COMPOSITION CANVAS above as a finished image. ` +
-        `The CANVAS constraints (position, size, rotation, silhouette) are non-negotiable — ` +
-        `match them exactly. The space around the subject is yours to invent freely from the ` +
-        `style reference${validRefs.length > 1 ? 's' : ''}. ` +
-        `Apply the visual style (lighting, materials, palette, atmosphere) from the style reference${validRefs.length > 1 ? 's' : ''}. ` +
-        `The output must be a NEW image — visually distinct from every input — ` +
-        `that combines the canvas's composition with the references' style.`;
+        `TASK: Combine the two locks above into a single rendered image.\n` +
+        `From IMAGE 1: every visual quality (style, material, lighting, color, atmosphere).\n` +
+        `From IMAGE 2: every spatial quality (camera, composition, subject position, size, rotation).\n` +
+        `Render at campaign quality — sharp, polished, and ready for commercial use.\n` +
+        `The output must be visually distinct from both inputs.`;
     } else if (hasFrame) {
       directive =
         `TASK: Render the COMPOSITION CANVAS above as a finished image, ` +
@@ -224,7 +220,7 @@ const NanobananaAdapter = {
     contents.push({ text: fullPrompt });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-3.1-flash-image-preview',
       contents: [{ role: 'user', parts: contents }],
       config: {
         responseModalities: ['TEXT', 'IMAGE']
