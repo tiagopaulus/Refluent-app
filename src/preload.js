@@ -42,5 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Pipeline — frame extraction
   extractFrame: (args) => ipcRenderer.invoke('extract-frame', args),
   // Open a folder in OS file manager
-  openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath)
+  openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
+  // Diagnostic — log a string from the renderer to the main-process terminal
+  logToMain: (msg) => ipcRenderer.send('log-to-main', msg)
 });

@@ -482,6 +482,10 @@ ipcMain.handle('open-folder', async (_event, folderPath) => {
     return false;
   }
 });
+
+// Diagnostic — pipe renderer log strings into the main-process terminal output
+ipcMain.on('log-to-main', (_e, msg) => console.log(msg));
+
 ipcMain.handle('ai-image-status', async (_event, { jobId }) => {
   try { return { success: true, ...(await imageProvider.checkStatus(jobId)) }; }
   catch (err) {

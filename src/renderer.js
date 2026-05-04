@@ -535,25 +535,46 @@ function animate() {
     offscreenCamera.near = camera.near;
     offscreenCamera.far = camera.far;
     offscreenCamera.zoom = camera.zoom;
+    // Mission 3.3 (v3.0): sync fov + aspect to live every frame (handles lens
+    // animations + window resizes), then re-derive the safe-frame sub-rect
+    // and re-apply setViewOffset to carve it out of the live frustum.
+    offscreenCamera.fov = camera.fov;
+    offscreenCamera.aspect = camera.aspect;
     const overlay = document.getElementById('safe-frame-overlay');
     const liveCanvas = renderer.domElement;
     const canvasRect = liveCanvas.getBoundingClientRect();
+    let safeFrameW = canvasRect.width;
     let safeFrameH = canvasRect.height;
-    if (overlay && overlay.style.height) {
+    let safeFrameLeft = 0;
+    let safeFrameTop = 0;
+    if (overlay && overlay.style.width && overlay.style.height) {
       const ovW = parseFloat(overlay.style.width) || canvasRect.width;
       const ovH = parseFloat(overlay.style.height) || canvasRect.height;
+      const ovLeft = parseFloat(overlay.style.left) || 0;
+      const ovTop = parseFloat(overlay.style.top) || 0;
       const visibleAspect = ovW / ovH;
-      const outputAspect = offscreenCamera.aspect;
+      // Output aspect is the offscreen canvas's aspect (set once at REC start)
+      const outputAspect = offscreenCanvas.width / offscreenCanvas.height;
       if (outputAspect > visibleAspect) {
+        safeFrameW = ovW;
         safeFrameH = ovW / outputAspect;
       } else {
         safeFrameH = ovH;
+        safeFrameW = ovH * outputAspect;
       }
+      const safeLeftInOverlay = (ovW - safeFrameW) / 2;
+      const safeTopInOverlay = (ovH - safeFrameH) / 2;
+      safeFrameLeft = ovLeft - canvasRect.left + safeLeftInOverlay;
+      safeFrameTop = ovTop - canvasRect.top + safeTopInOverlay;
     }
-    const verticalCoverageRatio = safeFrameH / canvasRect.height;
-    const liveHalfV = Math.tan((camera.fov * Math.PI) / 360);
-    const offHalfV = liveHalfV * verticalCoverageRatio;
-    offscreenCamera.fov = (Math.atan(offHalfV) * 360) / Math.PI;
+    offscreenCamera.setViewOffset(
+      canvasRect.width,
+      canvasRect.height,
+      safeFrameLeft,
+      safeFrameTop,
+      safeFrameW,
+      safeFrameH
+    );
     offscreenCamera.updateProjectionMatrix();
     offscreenRenderer.render(scene, offscreenCamera);
   }
@@ -2148,40 +2169,54 @@ function startOffscreenRecording(outputDims) {
   offscreenRenderer.setClearColor(clearColor, renderer.getClearAlpha());
   offscreenRenderer.shadowMap.enabled = renderer.shadowMap.enabled;
 
-  // Mission 2 (v3.0): the offscreen camera must render the EXACT same scene
-  // region as what the user sees inside the safe-frame rectangle on screen.
-  // The safe-frame is the largest rect of `outputDims.w/outputDims.h` aspect
-  // that fits inside the live viewport.
+  // Mission 3.3 (v3.0): use Three.js setViewOffset to carve the safe-frame
+  // sub-rectangle out of the LIVE camera's frustum. This guarantees the
+  // recording matches what the user sees inside the teal safe-frame both in
+  // size AND vertical centering — even when the safe-frame is offset upward
+  // because the bottom toolbar shrinks the overlay area.
   //
-  // Since Three.js perspective cameras use vertical FOV:
-  //   - If the safe-frame is height-limited (output ratio narrower than viewport
-  //     ratio, e.g. 9:16 inside a wide window), we use the LIVE camera's FOV
-  //     directly — both share the same vertical extent.
-  //   - If the safe-frame is width-limited (output ratio wider than viewport
-  //     ratio, e.g. 16:9 in a tall window), we shrink vertical FOV so that the
-  //     output's horizontal coverage matches the live camera's horizontal
-  //     coverage at the safe-frame's height.
+  // Key contract: keep camera.fov + camera.aspect IDENTICAL to the live
+  // camera (so the projection matrix is calibrated for the FULL canvas), then
+  // setViewOffset(canvasW, canvasH, safeLeft, safeTop, safeW, safeH) carves
+  // the sub-region. The output buffer's own aspect (set by setSize above)
+  // matches the carve's aspect, so no distortion.
   const overlay = document.getElementById('safe-frame-overlay');
   const liveCanvas = renderer.domElement;
   const canvasRect = liveCanvas.getBoundingClientRect();
+  let safeFrameW = canvasRect.width;
   let safeFrameH = canvasRect.height;
+  let safeFrameLeft = 0;
+  let safeFrameTop = 0;
   if (overlay && overlay.style.width && overlay.style.height) {
     const ovW = parseFloat(overlay.style.width) || canvasRect.width;
     const ovH = parseFloat(overlay.style.height) || canvasRect.height;
+    const ovLeft = parseFloat(overlay.style.left) || 0;
+    const ovTop = parseFloat(overlay.style.top) || 0;
     const visibleAspect = ovW / ovH;
     const outputAspect = outputDims.w / outputDims.h;
     if (outputAspect > visibleAspect) {
+      safeFrameW = ovW;
       safeFrameH = ovW / outputAspect;
     } else {
       safeFrameH = ovH;
+      safeFrameW = ovH * outputAspect;
     }
+    const safeLeftInOverlay = (ovW - safeFrameW) / 2;
+    const safeTopInOverlay = (ovH - safeFrameH) / 2;
+    safeFrameLeft = ovLeft - canvasRect.left + safeLeftInOverlay;
+    safeFrameTop = ovTop - canvasRect.top + safeTopInOverlay;
   }
-  const verticalCoverageRatio = safeFrameH / canvasRect.height;
-  const liveHalfV = Math.tan((camera.fov * Math.PI) / 360);
-  const offHalfV = liveHalfV * verticalCoverageRatio;
   offscreenCamera = camera.clone();
-  offscreenCamera.fov = (Math.atan(offHalfV) * 360) / Math.PI;
-  offscreenCamera.aspect = outputDims.w / outputDims.h;
+  // Do NOT change fov or aspect — they must stay calibrated for the full
+  // canvas so setViewOffset carves correctly.
+  offscreenCamera.setViewOffset(
+    canvasRect.width,
+    canvasRect.height,
+    safeFrameLeft,
+    safeFrameTop,
+    safeFrameW,
+    safeFrameH
+  );
   offscreenCamera.updateProjectionMatrix();
 
   // Render once before captureStream so the first emitted frame isn't blank.
