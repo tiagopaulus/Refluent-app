@@ -532,10 +532,28 @@ function animate() {
   if (isRecording && offscreenRenderer && offscreenCamera) {
     offscreenCamera.position.copy(camera.position);
     offscreenCamera.quaternion.copy(camera.quaternion);
-    offscreenCamera.fov = camera.fov;
     offscreenCamera.near = camera.near;
     offscreenCamera.far = camera.far;
     offscreenCamera.zoom = camera.zoom;
+    const overlay = document.getElementById('safe-frame-overlay');
+    const liveCanvas = renderer.domElement;
+    const canvasRect = liveCanvas.getBoundingClientRect();
+    let safeFrameH = canvasRect.height;
+    if (overlay && overlay.style.height) {
+      const ovW = parseFloat(overlay.style.width) || canvasRect.width;
+      const ovH = parseFloat(overlay.style.height) || canvasRect.height;
+      const visibleAspect = ovW / ovH;
+      const outputAspect = offscreenCamera.aspect;
+      if (outputAspect > visibleAspect) {
+        safeFrameH = ovW / outputAspect;
+      } else {
+        safeFrameH = ovH;
+      }
+    }
+    const verticalCoverageRatio = safeFrameH / canvasRect.height;
+    const liveHalfV = Math.tan((camera.fov * Math.PI) / 360);
+    const offHalfV = liveHalfV * verticalCoverageRatio;
+    offscreenCamera.fov = (Math.atan(offHalfV) * 360) / Math.PI;
     offscreenCamera.updateProjectionMatrix();
     offscreenRenderer.render(scene, offscreenCamera);
   }
@@ -1262,18 +1280,28 @@ objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
   slider.addEventListener('input', () => {
     if (!selectedObject) return;
     const axis = slider.dataset.axis;
-    const delta = parseFloat(slider.value) * 0.15;
+    // Mission N (v3.0): adaptive sensitivity. Multiplier scales with the
+    // object's current size so a 0.5× drag always feels like ~30% of a halving
+    // regardless of whether the object is at scale 0.1 or scale 50.
+    // Uses the smallest scale axis so a tall, thin object can still shrink
+    // proportionally without one axis hitting the floor early.
+    const baseX = sliderBaseValues['scale_x'] || 1;
+    const baseY = sliderBaseValues['scale_y'] || 1;
+    const baseZ = sliderBaseValues['scale_z'] || 1;
+    const adaptiveBase = Math.min(baseX, baseY, baseZ);
+    const sensitivity = adaptiveBase * 0.3;
+    const delta = parseFloat(slider.value) * sensitivity;
     if (uniformScale) {
-      selectedObject.scale.x = Math.max(0.01, (sliderBaseValues['scale_x'] || 1) + delta);
-      selectedObject.scale.y = Math.max(0.01, (sliderBaseValues['scale_y'] || 1) + delta);
-      selectedObject.scale.z = Math.max(0.01, (sliderBaseValues['scale_z'] || 1) + delta);
+      selectedObject.scale.x = Math.max(0.001, baseX + delta);
+      selectedObject.scale.y = Math.max(0.001, baseY + delta);
+      selectedObject.scale.z = Math.max(0.001, baseZ + delta);
       // Mirror visual position to the other two sliders so the user sees them sweep together
       objectPopup.querySelectorAll('[data-type="scale"]').forEach(other => {
         if (other !== slider) other.value = slider.value;
       });
     } else {
       const base = sliderBaseValues['scale_' + axis] || 1;
-      selectedObject.scale[axis] = Math.max(0.01, base + delta);
+      selectedObject.scale[axis] = Math.max(0.001, base + delta);
     }
     updateTransformUI();
     markSceneModified();
@@ -1332,7 +1360,19 @@ document.getElementById('reset-rotation-btn').addEventListener('click', () => {
 
 document.getElementById('reset-scale-btn').addEventListener('click', () => {
   if (!selectedObject) return;
-  selectedObject.scale.set(1, 1, 1);
+  if (selectedObject.userData && selectedObject.userData.type === 'imported') {
+    const importScale = selectedObject.userData.importScale;
+    if (typeof importScale === 'number' && isFinite(importScale)) {
+      selectedObject.scale.set(importScale, importScale, importScale);
+    } else {
+      const box = new THREE.Box3().setFromObject(selectedObject);
+      const sizeVec = box.getSize(new THREE.Vector3());
+      const fallbackScale = 5 / Math.max(sizeVec.length(), 0.0001);
+      selectedObject.scale.set(fallbackScale, fallbackScale, fallbackScale);
+    }
+  } else {
+    selectedObject.scale.set(1, 1, 1);
+  }
   objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
     slider.value = 0;
   });
@@ -1908,6 +1948,7 @@ async function loadModelFile(filePath, ext, nameWithoutExt) {
 
     const scale = 5 / size;
     wrapper.scale.set(scale, scale, scale);
+    wrapper.userData.importScale = scale;
     wrapper.position.y += 2.5;
 
     wrapper.userData.isUserObject = true;
@@ -2107,7 +2148,39 @@ function startOffscreenRecording(outputDims) {
   offscreenRenderer.setClearColor(clearColor, renderer.getClearAlpha());
   offscreenRenderer.shadowMap.enabled = renderer.shadowMap.enabled;
 
+  // Mission 2 (v3.0): the offscreen camera must render the EXACT same scene
+  // region as what the user sees inside the safe-frame rectangle on screen.
+  // The safe-frame is the largest rect of `outputDims.w/outputDims.h` aspect
+  // that fits inside the live viewport.
+  //
+  // Since Three.js perspective cameras use vertical FOV:
+  //   - If the safe-frame is height-limited (output ratio narrower than viewport
+  //     ratio, e.g. 9:16 inside a wide window), we use the LIVE camera's FOV
+  //     directly — both share the same vertical extent.
+  //   - If the safe-frame is width-limited (output ratio wider than viewport
+  //     ratio, e.g. 16:9 in a tall window), we shrink vertical FOV so that the
+  //     output's horizontal coverage matches the live camera's horizontal
+  //     coverage at the safe-frame's height.
+  const overlay = document.getElementById('safe-frame-overlay');
+  const liveCanvas = renderer.domElement;
+  const canvasRect = liveCanvas.getBoundingClientRect();
+  let safeFrameH = canvasRect.height;
+  if (overlay && overlay.style.width && overlay.style.height) {
+    const ovW = parseFloat(overlay.style.width) || canvasRect.width;
+    const ovH = parseFloat(overlay.style.height) || canvasRect.height;
+    const visibleAspect = ovW / ovH;
+    const outputAspect = outputDims.w / outputDims.h;
+    if (outputAspect > visibleAspect) {
+      safeFrameH = ovW / outputAspect;
+    } else {
+      safeFrameH = ovH;
+    }
+  }
+  const verticalCoverageRatio = safeFrameH / canvasRect.height;
+  const liveHalfV = Math.tan((camera.fov * Math.PI) / 360);
+  const offHalfV = liveHalfV * verticalCoverageRatio;
   offscreenCamera = camera.clone();
+  offscreenCamera.fov = (Math.atan(offHalfV) * 360) / Math.PI;
   offscreenCamera.aspect = outputDims.w / outputDims.h;
   offscreenCamera.updateProjectionMatrix();
 
