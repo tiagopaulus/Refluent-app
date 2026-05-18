@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI provider bridges (renderer never imports provider modules)
   aiVideoRender: (args) => ipcRenderer.invoke('ai-video-render', args),
   aiVideoStatus: (args) => ipcRenderer.invoke('ai-video-status', args),
-  aiVideoCancel: (args) => ipcRenderer.invoke('ai-video-cancel', args),
+  aiVideoCancel: (jobId) => ipcRenderer.invoke('ai-video-cancel', jobId),
   aiImageGenerate: (args) => ipcRenderer.invoke('ai-image-generate', args),
   aiImageStatus: (args) => ipcRenderer.invoke('ai-image-status', args),
   aiUpscale: (args) => ipcRenderer.invoke('ai-upscale', args),

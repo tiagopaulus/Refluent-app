@@ -5832,6 +5832,82 @@ function refreshRefImageSlots() {
 function _setGenBtns(cls, disabled, label) {
   document.querySelectorAll(cls).forEach(b => { b.disabled = disabled; b.textContent = label; });
 }
+
+// Progress bar controller. Transforms a button into a progress bar by
+// overlaying a fill div behind the text. Drives a smooth 0→95% animation
+// based on a typical-duration target so users get a "still working" signal
+// even though neither Gemini nor fal expose real progress percentages.
+const _progressTimers = {};
+
+function startProgressBar(btnSelector, opts) {
+  // opts: { typicalDurationMs, cancelable, onCancel, label }
+  const buttons = document.querySelectorAll(btnSelector);
+  if (!buttons.length) return null;
+
+  const startTime = Date.now();
+  const typical = opts.typicalDurationMs || 60000;
+  const cancelable = !!opts.cancelable;
+
+  buttons.forEach(btn => {
+    btn.classList.add('progress-mode');
+    if (cancelable) btn.classList.add('progress-cancelable');
+    btn.disabled = false; // need clickability for cancel
+    btn.innerHTML = `
+      <div class="progress-bar-fill" style="width:0%"></div>
+      <span class="progress-bar-label">${opts.label || 'Working…'} 0%</span>
+    `;
+    if (cancelable && opts.onCancel) {
+      const handler = (e) => { e.stopPropagation(); opts.onCancel(); };
+      btn.addEventListener('click', handler);
+      btn._progressCancelHandler = handler;
+    }
+  });
+
+  if (_progressTimers[btnSelector]) clearInterval(_progressTimers[btnSelector]);
+
+  _progressTimers[btnSelector] = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const linearProgress = Math.min(elapsed / typical, 1);
+    const pct = Math.min(95, Math.round(95 * (1 - Math.pow(1 - linearProgress, 2))));
+    document.querySelectorAll(btnSelector).forEach(btn => {
+      const fill = btn.querySelector('.progress-bar-fill');
+      const label = btn.querySelector('.progress-bar-label');
+      if (fill) fill.style.width = pct + '%';
+      if (label) label.textContent = (opts.label || 'Working…') + ' ' + pct + '%';
+    });
+  }, 200);
+
+  return {
+    selector: btnSelector,
+    complete(finalLabel) {
+      if (_progressTimers[btnSelector]) {
+        clearInterval(_progressTimers[btnSelector]);
+        delete _progressTimers[btnSelector];
+      }
+      document.querySelectorAll(btnSelector).forEach(btn => {
+        const fill = btn.querySelector('.progress-bar-fill');
+        const label = btn.querySelector('.progress-bar-label');
+        if (fill) fill.style.width = '100%';
+        if (label) label.textContent = finalLabel || 'Done';
+      });
+    },
+    cleanup(restoreLabel) {
+      if (_progressTimers[btnSelector]) {
+        clearInterval(_progressTimers[btnSelector]);
+        delete _progressTimers[btnSelector];
+      }
+      document.querySelectorAll(btnSelector).forEach(btn => {
+        btn.classList.remove('progress-mode', 'progress-cancelable');
+        btn.disabled = false;
+        if (btn._progressCancelHandler) {
+          btn.removeEventListener('click', btn._progressCancelHandler);
+          delete btn._progressCancelHandler;
+        }
+        btn.innerHTML = restoreLabel || 'Generate →';
+      });
+    }
+  };
+}
 function _syncPromptFromDom(stage) {
   // Pull whichever view's textarea has the latest value (input listeners already mirror, but be defensive)
   const map = { nanobanana: ['nb-prompt', 'nb-prompt-node', 'nanobananaPrompt'],
@@ -5854,6 +5930,7 @@ let upscaleInFlight = false;
 let nanobananaPoller = null;
 let seedancePoller = null;
 let upscalePoller = null;
+let seedanceJobId = null;
 const AI_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 function _stopNanobananaPoller() {
@@ -6021,7 +6098,13 @@ async function runNanobananaGenerate(scope) {
     return;
   }
   nanobananaInFlight = true;
-  _setGenBtns('.nb-generate-btn', true, 'Generating…');
+  // Mission Progress: transform button into a progress bar. Nanobanana
+  // typically completes in 15-30s — set target at 25s.
+  const nbProgress = startProgressBar('.nb-generate-btn', {
+    typicalDurationMs: 25000,
+    cancelable: false,
+    label: 'Generating'
+  });
   try {
     const ratioSelect = document.getElementById('ratio-select');
     const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
@@ -6047,7 +6130,7 @@ async function runNanobananaGenerate(scope) {
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Generation failed. Please try again.');
-      _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+      nbProgress?.cleanup('Generate Image →');
       _stopNanobananaPoller();
       return;
     }
@@ -6056,7 +6139,7 @@ async function runNanobananaGenerate(scope) {
     nanobananaPoller = setInterval(async () => {
       if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
         _stopNanobananaPoller();
-        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+        nbProgress?.cleanup('Generate Image →');
         showToast('Image generation is taking too long. Please try again.');
         return;
       }
@@ -6066,12 +6149,12 @@ async function runNanobananaGenerate(scope) {
       } catch (e) {
         _stopNanobananaPoller();
         showToast('Could not check status.');
-        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+        nbProgress?.cleanup('Generate Image →');
         return;
       }
       if (status.status === 'complete') {
         _stopNanobananaPoller();
-        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+        nbProgress?.complete('Done ✓');
         const imageUrl = status.imageUrl || _toMediaUrl(status.imagePath || '');
         const imagePath = status.imagePath || null;
         showNanobananaResult(imageUrl, imagePath);
@@ -6079,12 +6162,12 @@ async function runNanobananaGenerate(scope) {
       } else if (status.status === 'error') {
         _stopNanobananaPoller();
         showToast(status.error || 'Generation failed. Please try again.');
-        _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+        nbProgress?.cleanup('Generate Image →');
       }
     }, 2000);
   } catch (e) {
     showToast('Something went wrong. Please try again.');
-    _setGenBtns('.nb-generate-btn', false, 'Generate Image →');
+    nbProgress?.cleanup('Generate Image →');
     _stopNanobananaPoller();
   }
 }
@@ -6097,7 +6180,24 @@ async function runSeedanceGenerate(scope) {
     return;
   }
   seedanceInFlight = true;
-  _setGenBtns('.sd-generate-btn', true, 'Rendering…');
+  // Mission Progress: transform button into a clickable-to-cancel progress
+  // bar. Seedance 1080p typically completes in 90-180s — target 150s as a
+  // middle estimate. Cancel-on-click hits fal.queue.cancel.
+  const sdProgress = startProgressBar('.sd-generate-btn', {
+    typicalDurationMs: 150000,
+    cancelable: true,
+    label: 'Rendering — click to cancel',
+    onCancel: () => {
+      if (seedanceJobId) {
+        window.electronAPI.aiVideoCancel?.(seedanceJobId);
+      }
+      _stopSeedancePoller();
+      sdProgress?.cleanup('Generate Video →');
+      seedanceInFlight = false;
+      seedanceJobId = null;
+      showToast('Seedance render cancelled');
+    }
+  });
   try {
     const ratioSelect = document.getElementById('ratio-select');
     const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
@@ -6114,16 +6214,19 @@ async function runSeedanceGenerate(scope) {
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
-      _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+      sdProgress?.cleanup('Generate Video →');
+      seedanceJobId = null;
       _stopSeedancePoller();
       return;
     }
+    seedanceJobId = job.jobId;
     if (seedancePoller) clearInterval(seedancePoller);
     const startedAt = Date.now();
     seedancePoller = setInterval(async () => {
       if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
         _stopSeedancePoller();
-        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        sdProgress?.cleanup('Generate Video →');
+        seedanceJobId = null;
         showToast('Seedance is taking too long. Please try again.');
         return;
       }
@@ -6132,13 +6235,15 @@ async function runSeedanceGenerate(scope) {
         status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
       } catch (e) {
         _stopSeedancePoller();
-        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        sdProgress?.cleanup('Generate Video →');
+        seedanceJobId = null;
         showToast('Could not check Seedance status. Please try again.');
         return;
       }
       if (status.status === 'complete') {
         _stopSeedancePoller();
-        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        sdProgress?.complete('Done ✓');
+        seedanceJobId = null;
         const videoUrl = status.videoUrl;
         const videoPath = status.videoPath || status.videoUrl;
         showSeedanceResult(videoUrl, videoPath);
@@ -6146,11 +6251,13 @@ async function runSeedanceGenerate(scope) {
       } else if (status.status === 'error') {
         _stopSeedancePoller();
         showToast(status.error || 'Seedance render failed. Please try again.');
-        _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+        sdProgress?.cleanup('Generate Video →');
+        seedanceJobId = null;
       }
     }, 800);
   } catch (e) {
-    _setGenBtns('.sd-generate-btn', false, 'Generate Video →');
+    sdProgress?.cleanup('Generate Video →');
+    seedanceJobId = null;
     _stopSeedancePoller();
   }
 }

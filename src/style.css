@@ -1512,7 +1512,8 @@ input[type=range] {
 }
 .pipeline-generate-btn:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 .nb-ref-images {
   display: flex;
@@ -2616,4 +2617,37 @@ button, .btn-label, .layer-item-name,
   height: 14px;
   accent-color: var(--accent, #4dd0c5);
   cursor: pointer;
+}
+
+/* Mission Progress: button-as-progress-bar */
+.pipeline-generate-btn.progress-mode {
+  position: relative;
+  overflow: hidden;
+  pointer-events: none; /* default: not cancelable */
+  cursor: default;
+}
+.pipeline-generate-btn.progress-mode.progress-cancelable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pipeline-generate-btn.progress-mode.progress-cancelable:hover .progress-bar-label::after {
+  content: ' ✕';
+  opacity: 0.7;
+}
+.progress-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent, #4dd0c5) 0%, rgba(77, 208, 197, 0.7) 100%);
+  transition: width 0.3s ease;
+  z-index: 0;
+}
+.progress-bar-label {
+  position: relative;
+  z-index: 1;
+  color: #0d1117;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  user-select: none;
 }

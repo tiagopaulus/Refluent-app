@@ -417,9 +417,13 @@ ipcMain.handle('ai-video-status', async (_event, { jobId }) => {
   try { return { success: true, ...(await videoProvider.checkStatus(jobId)) }; }
   catch (err) { return { success: false, error: err.message }; }
 });
-ipcMain.handle('ai-video-cancel', async (_event, { jobId }) => {
-  try { await videoProvider.cancel(jobId); return { success: true }; }
-  catch (err) { return { success: false, error: err.message }; }
+ipcMain.handle('ai-video-cancel', async (_event, jobId) => {
+  try {
+    if (videoProvider.cancel) await videoProvider.cancel(jobId);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 ipcMain.handle('extract-frame', async (_event, { mp4Path, timestamp, saveFolder }) => {
   if (!mp4Path || !fs.existsSync(mp4Path)) {
