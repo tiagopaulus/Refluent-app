@@ -15,28 +15,72 @@ const SeedanceAdapter = {
     this._configured = true;
   },
 
-  async render(mp4Path, prompt, referenceFramePath) {
+  async render(mp4Path, prompt, referenceFramePath, aspectRatio) {
     this._ensureConfigured();
     const { fal } = require('@fal-ai/client');
     const fs = require('fs');
 
+    // Upload the MP4 (camera-motion reference video).
+    // Note: must use a Blob, not a ReadStream. Node 18+'s fetch (which
+    // @fal-ai/client uses internally) rejects streaming bodies unless the
+    // RequestInit sets `duplex: 'half'`, which the SDK doesn't. A Blob has
+    // a known size and uses non-streaming upload — no duplex required.
     let videoUrl;
     try {
-      const fileStream = fs.createReadStream(mp4Path);
       const fileName = mp4Path.split(/[\\/]/).pop();
-      videoUrl = await fal.storage.upload(fileStream, { fileName });
+      const buf = await fs.promises.readFile(mp4Path);
+      const blob = new Blob([buf], { type: 'video/mp4' });
+      videoUrl = await fal.storage.upload(blob, { fileName });
     } catch (err) {
+      console.error('[Seedance upload error]', err);
       throw new Error('Could not upload video file. Please try again.');
     }
 
-    const { request_id } = await fal.queue.submit('bytedance/seedance-2.0/reference-to-video', {
-      input: {
-        prompt: prompt,
-        reference_video_url: videoUrl,
-        duration: 10,
-        resolution: '720p',
-        speed: 'fast'
+    // Upload the reference still image (style/look-and-feel from Nanobanana)
+    // This is the bug fix: previously referenceFramePath was accepted but
+    // silently dropped. fal.ai's reference-to-video endpoint supports image_urls
+    // in addition to video_urls — the Nanobanana-styled still gives the model
+    // the visual style + identity to apply onto the camera motion.
+    let imageUrl = null;
+    if (referenceFramePath) {
+      try {
+        const imgName = referenceFramePath.split(/[\\/]/).pop();
+        const imgBuf = await fs.promises.readFile(referenceFramePath);
+        const ext = (imgName.split('.').pop() || '').toLowerCase();
+        const mime = ext === 'png' ? 'image/png'
+          : ext === 'webp' ? 'image/webp'
+          : 'image/jpeg';
+        const imgBlob = new Blob([imgBuf], { type: mime });
+        imageUrl = await fal.storage.upload(imgBlob, { fileName: imgName });
+      } catch (err) {
+        // Non-fatal — fall back to video-only generation.
+        console.warn('[Seedance] Could not upload reference image, proceeding without:', err.message);
       }
+    }
+
+    // Build the prompt with explicit reference tokens. fal.ai's Seedance 2.0
+    // resolves @Image1 and @Video1 against image_urls[0] and video_urls[0].
+    // Without these tokens the model treats the assets as loose context.
+    const tokens = [];
+    if (imageUrl) tokens.push('@Image1');
+    tokens.push('@Video1');
+    const referenceHint = tokens.length === 2
+      ? `Apply the style, materials, and visual treatment from ${tokens[0]} onto the camera motion and composition from ${tokens[1]}. `
+      : `Follow the camera motion and composition from ${tokens[0]}. `;
+    const fullPrompt = referenceHint + (prompt || '').trim();
+
+    const input = {
+      prompt: fullPrompt,
+      video_urls: [videoUrl],
+      duration: '5',
+      resolution: '720p',
+      aspect_ratio: aspectRatio || '16:9',
+      generate_audio: true
+    };
+    if (imageUrl) input.image_urls = [imageUrl];
+
+    const { request_id } = await fal.queue.submit('bytedance/seedance-2.0/reference-to-video', {
+      input
     });
 
     this._jobs[request_id] = { status: 'pending' };

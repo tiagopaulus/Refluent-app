@@ -6076,10 +6076,13 @@ async function runSeedanceGenerate(scope) {
   seedanceInFlight = true;
   _setGenBtns('.sd-generate-btn', true, 'Rendering…');
   try {
+    const ratioSelect = document.getElementById('ratio-select');
+    const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
     const job = await window.electronAPI.aiVideoRender({
       mp4Path: pipelineState.mp4Path,
       prompt: pipelineState.seedancePrompt,
-      referenceFrame: pipelineState.seedanceReferenceImage
+      referenceFrame: pipelineState.seedanceReferenceImage,
+      aspectRatio: currentRatio
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');

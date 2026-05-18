@@ -127,13 +127,24 @@ const NanobananaAdapter = {
     if (hasFrame) {
       contents.push({
         text:
-          `IMAGE 2 — CAMERA AND COMPOSITION LOCKED.\n` +
-          `The following image is a 3D clay blockout. Use it ONLY as a cinematography guide.\n` +
-          `Camera position, angle, focal length, subject placement, subject size, and subject ` +
-          `orientation must be a 1:1 match to this reference. ` +
-          `Do not recompose. Do not recenter. Do not resize. Do not rotate.\n` +
-          `Do not derive any visual aesthetic, material, lighting, or color from this image — ` +
-          `the gray clay appearance is irrelevant.`
+          `IMAGE 2 — CAMERA AND COMPOSITION LOCKED (STRICT).\n` +
+          `The following image is a 3D clay blockout. The gray shapes are THE SUBJECT. ` +
+          `Everything that is not gray (dark/black areas) is empty stage.\n\n` +
+          `NON-NEGOTIABLE CONSTRAINTS — these must be matched 1:1, no exceptions:\n` +
+          `1. SUBJECT POSITION: the subject must occupy the same X/Y location in the output frame ` +
+          `as it does in this image. If the subject is in the upper-left third here, it must be ` +
+          `in the upper-left third in the output. If it is centered, it must be centered. ` +
+          `Do not recenter, do not reposition, do not "improve" the placement.\n` +
+          `2. SUBJECT SIZE: the subject must occupy the same percentage of frame width and ` +
+          `frame height as it does here. Do not zoom in, do not zoom out, do not resize.\n` +
+          `3. SUBJECT ROTATION & TILT: rotation, tilt, and orientation must match exactly. ` +
+          `Do not rotate, do not tilt, do not adjust the camera angle.\n` +
+          `4. SUBJECT SILHOUETTE & PROPORTIONS: shape and proportions must match exactly. ` +
+          `Do not stretch, squash, or alter the geometry.\n\n` +
+          `The grayscale appearance is IRRELEVANT — pull all visual style (materials, lighting, ` +
+          `color, atmosphere) from IMAGE 1 above. Do not derive any aesthetic from this image.\n\n` +
+          `If you violate any of constraints 1-4, the output is a failure regardless of how ` +
+          `beautiful the rendering is. Match this canvas first, then style.`
       });
       // Mission 2.4 (v3.0): prefer the padded canvas if the renderer built one.
       // Padding is only built when there are reference images present, so this
@@ -177,7 +188,7 @@ const NanobananaAdapter = {
         `The output must be visually distinct from both inputs.`;
     } else if (hasFrame) {
       directive =
-        `TASK: Render the COMPOSITION CANVAS above as a finished image, ` +
+        `TASK: Render IMAGE 2 (the camera and composition canvas) above as a finished image, ` +
         `applying the user's stylistic direction below. The CANVAS constraints (position, size, ` +
         `rotation, silhouette) are non-negotiable. Render a complete environment around the subject.`;
     } else if (hasStyleRefs) {

@@ -404,8 +404,8 @@ ipcMain.handle('read-file-base64', async (_event, filePath) => {
 });
 
 // AI provider IPC handlers (renderer has no direct access to @fal-ai/client)
-ipcMain.handle('ai-video-render', async (_event, { mp4Path, prompt, referenceFrame }) => {
-  try { return { success: true, ...(await videoProvider.render(mp4Path, prompt, referenceFrame)) }; }
+ipcMain.handle('ai-video-render', async (_event, { mp4Path, prompt, referenceFrame, aspectRatio }) => {
+  try { return { success: true, ...(await videoProvider.render(mp4Path, prompt, referenceFrame, aspectRatio)) }; }
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('ai-video-status', async (_event, { jobId }) => {
