@@ -209,6 +209,9 @@ const pipelineState = {
   seedanceSkipped: false,
   seedanceVersion: 0,
   seedanceSourceNanobananaVersion: 0,
+  seedanceDuration: '5',
+  seedanceResolution: '1080p',
+  seedanceGenerateAudio: true,
 
   // Stage 5 — Upscale
   upscalePrompt: null,
@@ -5283,6 +5286,27 @@ function _bodyForStep(step) {
           ${tplBtn}
         </div>
         <textarea id="sd-prompt" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
+        <div class="sd-controls-row">
+          <div class="sd-control-group">
+            <span class="sd-control-label">Duration</span>
+            <div class="sd-control-buttons" data-control="duration">
+              <button type="button" class="sd-control-btn" data-value="5">5s</button>
+              <button type="button" class="sd-control-btn" data-value="8">8s</button>
+              <button type="button" class="sd-control-btn" data-value="10">10s</button>
+            </div>
+          </div>
+          <div class="sd-control-group">
+            <span class="sd-control-label">Quality</span>
+            <div class="sd-control-buttons" data-control="resolution">
+              <button type="button" class="sd-control-btn" data-value="720p">720p</button>
+              <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
+            </div>
+          </div>
+        </div>
+        <label class="sd-audio-toggle">
+          <input type="checkbox" id="sd-audio-toggle" />
+          <span>Generate Audio</span>
+        </label>
         <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
       </div>`;
   }
@@ -6081,7 +6105,10 @@ async function runSeedanceGenerate(scope) {
       prompt: pipelineState.seedancePrompt,
       referenceFrame: pipelineState.seedanceReferenceImage,
       aspectRatio: currentRatio,
-      saveFolder: localStorage.getItem('refluent_mp4_folder') || null
+      saveFolder: localStorage.getItem('refluent_mp4_folder') || null,
+      duration: pipelineState.seedanceDuration || '5',
+      resolution: pipelineState.seedanceResolution || '1080p',
+      generateAudio: pipelineState.seedanceGenerateAudio !== false
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
@@ -6283,6 +6310,48 @@ function rebuildNanobananaCardBody() {
   }
 }
 
+// Mission Seedance Phase 2 (v3.0): wire the duration/resolution toggle groups
+// and the Generate-Audio checkbox to pipelineState. Idempotent — applies
+// active classes from current state, then attaches listeners. Sync between
+// Simple Mode and Node Editor instances of the audio checkbox.
+function wireSeedanceControls(scope) {
+  const root = scope || document;
+
+  const setActive = (controlName, value) => {
+    root.querySelectorAll(`[data-control="${controlName}"] .sd-control-btn`).forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.value === String(value));
+    });
+  };
+  setActive('duration', pipelineState.seedanceDuration || '5');
+  setActive('resolution', pipelineState.seedanceResolution || '1080p');
+
+  root.querySelectorAll('.sd-control-buttons').forEach(group => {
+    const controlName = group.dataset.control;
+    group.querySelectorAll('.sd-control-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const value = btn.dataset.value;
+        if (controlName === 'duration') pipelineState.seedanceDuration = value;
+        if (controlName === 'resolution') pipelineState.seedanceResolution = value;
+        setActive(controlName, value);
+        markSceneModified();
+      });
+    });
+  });
+
+  const audioInputs = root.querySelectorAll('#sd-audio-toggle, .sd-audio-toggle-input');
+  audioInputs.forEach(input => {
+    input.checked = pipelineState.seedanceGenerateAudio !== false;
+    input.addEventListener('change', (e) => {
+      pipelineState.seedanceGenerateAudio = e.target.checked;
+      audioInputs.forEach(other => {
+        if (other !== e.target) other.checked = e.target.checked;
+      });
+      markSceneModified();
+    });
+  });
+}
+
 function rebuildSeedanceCardBody() {
   const sdCard = document.querySelector('.step-card[data-step-key="seedance"]');
   const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === 'seedance');
@@ -6302,6 +6371,8 @@ function rebuildSeedanceCardBody() {
       _wireNodeFormBody('seedance', sdNode);
     }
   }
+  // Re-wire the new duration/resolution/audio controls in both views
+  wireSeedanceControls(document);
 }
 
 function _nanobananaResultHTML(imageUrl) {
@@ -6770,6 +6841,8 @@ function rebuildSimplePanel() {
   // Mission J2 (v3.0): wire Replace buttons + refresh stale chips after rebuild
   wireReplaceButtons(document);
   refreshStaleChips();
+  // Mission Seedance Phase 2 (v3.0): wire duration/resolution/audio controls
+  if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
 }
 
 rebuildSimplePanel();
@@ -7337,6 +7410,27 @@ function buildNodeEditor() {
         <button class="template-picker-btn" data-stage="seedance">⚡ Templates</button>
       </div>
       <textarea id="sd-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
+      <div class="sd-controls-row">
+        <div class="sd-control-group">
+          <span class="sd-control-label">Duration</span>
+          <div class="sd-control-buttons" data-control="duration">
+            <button type="button" class="sd-control-btn" data-value="5">5s</button>
+            <button type="button" class="sd-control-btn" data-value="8">8s</button>
+            <button type="button" class="sd-control-btn" data-value="10">10s</button>
+          </div>
+        </div>
+        <div class="sd-control-group">
+          <span class="sd-control-label">Quality</span>
+          <div class="sd-control-buttons" data-control="resolution">
+            <button type="button" class="sd-control-btn" data-value="720p">720p</button>
+            <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
+          </div>
+        </div>
+      </div>
+      <label class="sd-audio-toggle">
+        <input type="checkbox" class="sd-audio-toggle-input" />
+        <span>Generate Audio</span>
+      </label>
       <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
     </div>`;
 
@@ -7605,6 +7699,8 @@ function buildNodeEditor() {
   // Mission J2 (v3.0): wire Replace buttons + refresh stale chips after rebuild
   wireReplaceButtons(document);
   refreshStaleChips();
+  // Mission Seedance Phase 2 (v3.0): wire duration/resolution/audio controls
+  if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
 }
 
 buildNodeEditor();

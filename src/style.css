@@ -2558,3 +2558,62 @@ button, .btn-label, .layer-item-name,
   font-weight: 600;
   letter-spacing: 6px;
 }
+
+/* Mission Seedance Phase 2 (v3.0): duration / resolution / audio controls */
+.sd-controls-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+.sd-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.sd-control-label {
+  font-size: 10px;
+  color: var(--text-dim, #9ca3af);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.sd-control-buttons {
+  display: flex;
+  gap: 4px;
+}
+.sd-control-btn {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 10px;
+  background: var(--bg-elev-2, #2a2e36);
+  border: 1px solid var(--border-faint, #3a3f48);
+  border-radius: 4px;
+  color: var(--text-mid, #c7ccd4);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.sd-control-btn:hover {
+  background: var(--bg-elev-3, #353a44);
+}
+.sd-control-btn.active {
+  background: var(--accent, #4dd0c5);
+  border-color: var(--accent, #4dd0c5);
+  color: #0d1117;
+  font-weight: 600;
+}
+.sd-audio-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-mid, #c7ccd4);
+  cursor: pointer;
+  user-select: none;
+  margin-top: 4px;
+}
+.sd-audio-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent, #4dd0c5);
+  cursor: pointer;
+}

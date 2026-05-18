@@ -29,7 +29,7 @@ const SeedanceAdapter = {
     this._configured = true;
   },
 
-  async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder) {
+  async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder, duration, resolution, generateAudio) {
     this._ensureConfigured();
     const { fal } = require('@fal-ai/client');
 
@@ -93,10 +93,10 @@ const SeedanceAdapter = {
     const input = {
       prompt: fullPrompt,
       video_urls: [videoUrl],
-      duration: '5',
-      resolution: '1080p',
+      duration: String(duration || 5),
+      resolution: resolution || '1080p',
       aspect_ratio: aspectRatio || '16:9',
-      generate_audio: true
+      generate_audio: generateAudio !== false
     };
     if (imageUrl) input.image_urls = [imageUrl];
 
