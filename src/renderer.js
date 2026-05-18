@@ -319,23 +319,21 @@ function replaceStage(stepKey) {
     buildNodeEditor();
     activateStep('frame');
   } else if (stepKey === 'nanobanana') {
-    // Mission J3 (v3.0): clear the styled image but PRESERVE prompt + reference
-    // images so the user can tweak and regenerate without retyping.
-    pipelineState.nanobananaResultImage = null;
+    // Surgical rebuild: clear only this stage's result + the auto-fed Seedance
+    // ref, then rebuild ONLY the Nanobanana card body (not the whole panel).
+    // This preserves the upstream Frame/MP4 cards' DOM state and avoids
+    // collateral resets of other stages' kept-state pills.
     pipelineState.nanobananaSkipped = false;
-    // Also break the auto-fed link to Seedance — Seedance's "Visual Reference"
-    // was auto-filled from this output. Clear it so the user is forced to
-    // regenerate or pick a different image.
-    pipelineState.seedanceReferenceImage = null;
-    rebuildSimplePanel();
-    buildNodeEditor();
+    _regenerateNanobanana();
     activateStep('nanobanana');
   } else if (stepKey === 'seedance') {
-    // Mission J3 (v3.0): clear the rendered video but preserve prompt.
-    pipelineState.seedanceResultVideo = null;
+    // Surgical rebuild: clear only the Seedance result, then rebuild ONLY
+    // the Seedance card body. Crucially, this leaves the Nanobanana card's
+    // kept-state pill + result image intact in the DOM, and the Seedance
+    // ref restore inside _regenerateSeedance() repopulates #sd-ref-image-area
+    // from the still-set pipelineState.seedanceReferenceImage.
     pipelineState.seedanceSkipped = false;
-    rebuildSimplePanel();
-    buildNodeEditor();
+    _regenerateSeedance();
     activateStep('seedance');
   } else if (stepKey === 'upscale') {
     // Mission J3 (v3.0): clear the upscaled output but preserve prompt + resolution.
@@ -6082,7 +6080,8 @@ async function runSeedanceGenerate(scope) {
       mp4Path: pipelineState.mp4Path,
       prompt: pipelineState.seedancePrompt,
       referenceFrame: pipelineState.seedanceReferenceImage,
-      aspectRatio: currentRatio
+      aspectRatio: currentRatio,
+      saveFolder: localStorage.getItem('refluent_mp4_folder') || null
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
@@ -6317,6 +6316,92 @@ function _nanobananaResultHTML(imageUrl) {
     </div>`;
 }
 
+// Shared compact icon-button used in the "kept" pill so the user can still
+// regenerate after committing. Subtle styling — secondary text color, no
+// background, slight hover lift — so it doesn't look like a primary action.
+function _buildKeptRegenButton(stage) {
+  return `<button class="kept-regenerate-btn" data-stage="${stage}" title="Regenerate"
+    style="background:transparent;border:1px solid var(--border);border-radius:3px;
+    color:var(--text-secondary);font-size:10px;cursor:pointer;padding:2px 6px;
+    font-family:var(--font);line-height:1;opacity:0.75;transition:opacity 0.12s,color 0.12s,border-color 0.12s;">↺</button>`;
+}
+
+// Idempotent wiring for the kept-state regenerate buttons. Called after every
+// innerHTML replacement that injects a kept pill (both Simple Mode + Node Editor).
+function _wireKeptRegenButtons(stage, handler) {
+  document.querySelectorAll(`.kept-regenerate-btn[data-stage="${stage}"]`).forEach(btn => {
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); handler(); });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.opacity = '1';
+      btn.style.color = 'var(--accent-bright)';
+      btn.style.borderColor = 'var(--accent)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.opacity = '0.75';
+      btn.style.color = 'var(--text-secondary)';
+      btn.style.borderColor = 'var(--border)';
+    });
+  });
+}
+
+// Mission Regenerate-after-Keep: extracted from the .nb-regenerate-btn handler.
+// Clears the Nanobanana result, rebuilds the empty card, and restores the
+// user's prompt + reference images so they can tweak and re-run.
+function _regenerateNanobanana() {
+  pipelineState.nanobananaResultImage = null;
+  pipelineState.seedanceReferenceImage = null;
+
+  const savedPrompt = pipelineState.nanobananaPrompt || '';
+  const savedRefs = [...(pipelineState.nanobananaReferenceImages || [])];
+
+  rebuildNanobananaCardBody();
+
+  setTimeout(() => {
+    const nbPrompt = document.getElementById('nb-prompt');
+    if (nbPrompt) nbPrompt.value = savedPrompt;
+    const nbPromptNode = document.getElementById('nb-prompt-node');
+    if (nbPromptNode) nbPromptNode.value = savedPrompt;
+    savedRefs.forEach((imgPath, i) => {
+      if (!imgPath) return;
+      const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
+      if (slot) {
+        const refUrl = _toMediaUrl(imgPath);
+        slot.innerHTML = `<img src="${refUrl}">`;
+        slot.classList.add('filled');
+      }
+    });
+    updateNanobananaFramePreview();
+    if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+  }, 50);
+}
+
+// Same pattern for Seedance.
+function _regenerateSeedance() {
+  pipelineState.seedanceResultVideo = null;
+
+  const savedPrompt = pipelineState.seedancePrompt || '';
+  const savedRef = pipelineState.seedanceReferenceImage;
+
+  rebuildSeedanceCardBody();
+
+  setTimeout(() => {
+    const sdPrompt = document.getElementById('sd-prompt');
+    if (sdPrompt) sdPrompt.value = savedPrompt;
+    const sdPromptNode = document.getElementById('sd-prompt-node');
+    if (sdPromptNode) sdPromptNode.value = savedPrompt;
+    if (savedRef) {
+      const sdRefArea = document.getElementById('sd-ref-image-area');
+      if (sdRefArea) {
+        const refUrl = _toMediaUrl(savedRef);
+        sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+      }
+    }
+    if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
+  }, 50);
+}
+
 function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
   if (!container) return;
   container.querySelector('img')?.addEventListener('click', () => {
@@ -6336,45 +6421,24 @@ function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
       sdRefArea.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
     }
 
-    // Replace the Keep/Regenerate row with "kept" status in BOTH views
+    // Replace the Keep/Regenerate row with "kept" status in BOTH views,
+    // with a small ↺ button next to it so the user can still regenerate.
     document.querySelectorAll('.nb-result-actions').forEach(row => {
       row.innerHTML = `
-        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
-          ✓ Image kept — ready for Seedance
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:4px;width:100%;">
+          <span style="font-size:10px;color:var(--accent);font-weight:600;">
+            ✓ Image kept — ready for Seedance
+          </span>
+          ${_buildKeptRegenButton('nanobanana')}
         </div>`;
     });
+    _wireKeptRegenButtons('nanobanana', _regenerateNanobanana);
 
     advanceFromStep('nanobanana');
     showToast('Nanobanana image ready ✓');
     markSceneModified();
   });
-  container.querySelector('.nb-regenerate-btn')?.addEventListener('click', () => {
-    pipelineState.nanobananaResultImage = null;
-    pipelineState.seedanceReferenceImage = null;
-
-    const savedPrompt = pipelineState.nanobananaPrompt || '';
-    const savedRefs = [...(pipelineState.nanobananaReferenceImages || [])];
-
-    rebuildNanobananaCardBody();
-
-    setTimeout(() => {
-      const nbPrompt = document.getElementById('nb-prompt');
-      if (nbPrompt) nbPrompt.value = savedPrompt;
-      const nbPromptNode = document.getElementById('nb-prompt-node');
-      if (nbPromptNode) nbPromptNode.value = savedPrompt;
-      savedRefs.forEach((imgPath, i) => {
-        if (!imgPath) return;
-        const slot = document.querySelector(`.ref-img-slot[data-slot="${i}"]`);
-        if (slot) {
-          const refUrl = _toMediaUrl(imgPath);
-          slot.innerHTML = `<img src="${refUrl}">`;
-          slot.classList.add('filled');
-        }
-      });
-      updateNanobananaFramePreview();
-      if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
-    }, 50);
-  });
+  container.querySelector('.nb-regenerate-btn')?.addEventListener('click', _regenerateNanobanana);
 }
 
 function showNanobananaResult(imageUrl, imagePath) {
@@ -6423,38 +6487,20 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
 
     document.querySelectorAll('.sd-result-actions').forEach(row => {
       row.innerHTML = `
-        <div style="font-size:10px;color:var(--accent);font-weight:600;text-align:center;padding:4px;width:100%;">
-          ✓ Video kept — ready for Upscale
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:4px;width:100%;">
+          <span style="font-size:10px;color:var(--accent);font-weight:600;">
+            ✓ Video kept — ready for Upscale
+          </span>
+          ${_buildKeptRegenButton('seedance')}
         </div>`;
     });
+    _wireKeptRegenButtons('seedance', _regenerateSeedance);
 
     advanceFromStep('seedance');
     showToast('Seedance video ready ✓');
     markSceneModified();
   });
-  container.querySelector('.sd-regenerate-btn')?.addEventListener('click', () => {
-    pipelineState.seedanceResultVideo = null;
-
-    const savedPrompt = pipelineState.seedancePrompt || '';
-    const savedRef = pipelineState.seedanceReferenceImage;
-
-    rebuildSeedanceCardBody();
-
-    setTimeout(() => {
-      const sdPrompt = document.getElementById('sd-prompt');
-      if (sdPrompt) sdPrompt.value = savedPrompt;
-      const sdPromptNode = document.getElementById('sd-prompt-node');
-      if (sdPromptNode) sdPromptNode.value = savedPrompt;
-      if (savedRef) {
-        const sdRefArea = document.getElementById('sd-ref-image-area');
-        if (sdRefArea) {
-          const refUrl = _toMediaUrl(savedRef);
-          sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-        }
-      }
-      if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
-    }, 50);
-  });
+  container.querySelector('.sd-regenerate-btn')?.addEventListener('click', _regenerateSeedance);
 }
 
 function showSeedanceResult(videoUrl, videoPath) {

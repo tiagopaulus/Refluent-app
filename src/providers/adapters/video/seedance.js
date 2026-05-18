@@ -2,6 +2,20 @@
 // @fal-ai/client is required lazily inside methods so a missing key / missing
 // network never blocks app startup.
 
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+// Auto-incrementing filename helper, mirrors Nanobanana's getNextNBFilename
+function getNextSDFilename(folder) {
+  let i = 1;
+  while (true) {
+    const name = `Refluent_SD_${String(i).padStart(3, '0')}.mp4`;
+    if (!fs.existsSync(path.join(folder, name))) return name;
+    i++;
+  }
+}
+
 const SeedanceAdapter = {
   _jobs: {},
   _configured: false,
@@ -15,10 +29,9 @@ const SeedanceAdapter = {
     this._configured = true;
   },
 
-  async render(mp4Path, prompt, referenceFramePath, aspectRatio) {
+  async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder) {
     this._ensureConfigured();
     const { fal } = require('@fal-ai/client');
-    const fs = require('fs');
 
     // Upload the MP4 (camera-motion reference video).
     // Note: must use a Blob, not a ReadStream. Node 18+'s fetch (which
@@ -64,16 +77,24 @@ const SeedanceAdapter = {
     const tokens = [];
     if (imageUrl) tokens.push('@Image1');
     tokens.push('@Video1');
-    const referenceHint = tokens.length === 2
+
+    const styleClause = tokens.length === 2
       ? `Apply the style, materials, and visual treatment from ${tokens[0]} onto the camera motion and composition from ${tokens[1]}. `
       : `Follow the camera motion and composition from ${tokens[0]}. `;
-    const fullPrompt = referenceHint + (prompt || '').trim();
+
+    const identityLock = imageUrl
+      ? `SUBJECT IDENTITY LOCK: the product's physical form — bottle silhouette, cap design, label text, logo, color, materials, and proportions — must remain pixel-stable and identical to ${tokens[0]} at every frame of the video. Do NOT morph, soften, blur, or reinterpret any product detail during motion. Treat the subject as a rigid, photographed real-world object. `
+      : '';
+
+    const audioClause = 'Audio should match the visual mood of the reference image — ambient, restrained, and matching the campaign tone. No music unless explicitly requested. ';
+
+    const fullPrompt = styleClause + identityLock + audioClause + (prompt || '').trim();
 
     const input = {
       prompt: fullPrompt,
       video_urls: [videoUrl],
       duration: '5',
-      resolution: '720p',
+      resolution: '1080p',
       aspect_ratio: aspectRatio || '16:9',
       generate_audio: true
     };
@@ -83,7 +104,9 @@ const SeedanceAdapter = {
       input
     });
 
-    this._jobs[request_id] = { status: 'pending' };
+    // Thread saveFolder through the job record so checkStatus can write the
+    // finished MP4 to disk in the same folder as the user's other artifacts.
+    this._jobs[request_id] = { status: 'pending', saveFolder: saveFolder || null };
     return { jobId: request_id, status: 'pending' };
   },
 
@@ -100,14 +123,42 @@ const SeedanceAdapter = {
           requestId: jobId
         });
         const videoUrl = result?.data?.video?.url || result?.data?.video_url;
-        this._jobs[jobId] = { status: 'complete', videoUrl };
-        return { status: 'complete', videoUrl };
+
+        // Download to disk so the result survives offline + scene reloads
+        // (FAL CDN URLs expire). Mirrors Nanobanana's local-save behavior.
+        let videoPath = null;
+        const savedJob = this._jobs[jobId] || {};
+        const saveFolder = savedJob.saveFolder;
+        try {
+          if (videoUrl) {
+            const resp = await fetch(videoUrl);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching video`);
+            const buf = Buffer.from(await resp.arrayBuffer());
+            let outPath, filename;
+            if (saveFolder && fs.existsSync(saveFolder)) {
+              filename = getNextSDFilename(saveFolder);
+              outPath = path.join(saveFolder, filename);
+            } else {
+              filename = `Refluent_SD_${Date.now()}.mp4`;
+              outPath = path.join(os.tmpdir(), filename);
+            }
+            await fs.promises.writeFile(outPath, buf);
+            videoPath = outPath;
+          }
+        } catch (err) {
+          console.warn('[Seedance] Could not save video locally, falling back to URL only:', err.message);
+        }
+
+        this._jobs[jobId] = { status: 'complete', videoUrl, videoPath };
+        return { status: 'complete', videoUrl, videoPath };
       }
       if (status.status === 'FAILED') {
         return { status: 'error', error: 'Render failed. Please try again.' };
       }
       return { status: 'pending' };
     } catch (err) {
+      console.error('[Seedance status error]', err);
+      console.error('[Seedance status error] stack:', err?.stack);
       return { status: 'error', error: 'Could not check render status.' };
     }
   },
