@@ -30,6 +30,7 @@ const SeedanceAdapter = {
   },
 
   async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder, duration, resolution, generateAudio) {
+    console.log('[SD adapter.render called]', new Date().toISOString());
     this._ensureConfigured();
     const { fal } = require('@fal-ai/client');
 
@@ -86,9 +87,11 @@ const SeedanceAdapter = {
       ? `SUBJECT IDENTITY LOCK: the product's physical form — bottle silhouette, cap design, label text, logo, color, materials, and proportions — must remain pixel-stable and identical to ${tokens[0]} at every frame of the video. Do NOT morph, soften, blur, or reinterpret any product detail during motion. Treat the subject as a rigid, photographed real-world object. `
       : '';
 
+    const motionLock = `MOTION CONTINUITY LOCK: the camera motion from @Video1 must play exactly once across the entire output duration as a single continuous take. Do NOT loop the motion, do NOT restart from the beginning, do NOT cut, and do NOT repeat any segment. If the reference video's motion concludes before the output duration ends, hold the final camera position with subtle natural micro-movement rather than restarting the motion. The motion arc must feel like one uninterrupted take from start to finish. `;
+
     const audioClause = 'Audio should match the visual mood of the reference image — ambient, restrained, and matching the campaign tone. No music unless explicitly requested. ';
 
-    const fullPrompt = styleClause + identityLock + audioClause + (prompt || '').trim();
+    const fullPrompt = styleClause + identityLock + motionLock + audioClause + (prompt || '').trim();
 
     const input = {
       prompt: fullPrompt,
@@ -100,9 +103,26 @@ const SeedanceAdapter = {
     };
     if (imageUrl) input.image_urls = [imageUrl];
 
-    const { request_id } = await fal.queue.submit('bytedance/seedance-2.0/reference-to-video', {
-      input
+    // Direct-fetch submit (bypasses @fal-ai/client's hardcoded 3-retry policy on
+    // queue.submit, which silently created up to 4 duplicate jobs when fal's
+    // queue endpoint returned a transient 504/502/503/429 even though the prior
+    // attempt had already enqueued a job server-side. See queue.js:32-38 in the
+    // SDK. Status/result/upload/cancel still use the SDK — only submit is direct.
+    console.log('[SD direct-fetch submit called]', new Date().toISOString());
+    const response = await fetch('https://queue.fal.run/bytedance/seedance-2.0/reference-to-video', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Key ' + process.env.FAL_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ input })
     });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.error('[SD submit error]', response.status, body);
+      throw new Error(`fal submit failed: HTTP ${response.status} ${body || ''}`.trim());
+    }
+    const { request_id } = await response.json();
 
     // Thread saveFolder through the job record so checkStatus can write the
     // finished MP4 to disk in the same folder as the user's other artifacts.

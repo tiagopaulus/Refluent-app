@@ -405,6 +405,7 @@ ipcMain.handle('read-file-base64', async (_event, filePath) => {
 
 // AI provider IPC handlers (renderer has no direct access to @fal-ai/client)
 ipcMain.handle('ai-video-render', async (_event, args) => {
+  console.log('[SD main handler called]', new Date().toISOString(), args);
   try {
     return { success: true, ...(await videoProvider.render(
       args.mp4Path, args.prompt, args.referenceFrame, args.aspectRatio,

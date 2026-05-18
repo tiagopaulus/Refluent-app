@@ -6090,6 +6090,7 @@ async function runNanobananaGenerate(scope) {
 }
 
 async function runSeedanceGenerate(scope) {
+  console.log('[SD render-call]', new Date().toISOString(), 'inFlight=', seedanceInFlight);
   if (seedanceInFlight) return;
   if (!_syncPromptFromDom('seedance')) {
     showToast('Please enter a prompt first.');
@@ -6100,6 +6101,7 @@ async function runSeedanceGenerate(scope) {
   try {
     const ratioSelect = document.getElementById('ratio-select');
     const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
+    console.log('[SD ipc-call]', new Date().toISOString());
     const job = await window.electronAPI.aiVideoRender({
       mp4Path: pipelineState.mp4Path,
       prompt: pipelineState.seedancePrompt,
