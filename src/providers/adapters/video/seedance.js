@@ -29,7 +29,7 @@ const SeedanceAdapter = {
     this._configured = true;
   },
 
-  async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder, duration, resolution, generateAudio) {
+  async render(mp4Path, prompt, referenceFramePath, aspectRatio, saveFolder, duration, resolution, generateAudio, seed) {
     console.log('[SD adapter.render called]', new Date().toISOString());
     this._ensureConfigured();
     const { fal } = require('@fal-ai/client');
@@ -83,6 +83,10 @@ const SeedanceAdapter = {
       ? `Apply the style, materials, and visual treatment from ${tokens[0]} onto the camera motion and composition from ${tokens[1]}. `
       : `Follow the camera motion and composition from ${tokens[0]}. `;
 
+    const compositionLock = imageUrl
+      ? `COMPOSITION LOCK: the framing, subject position within the frame, camera angle, and overall composition from ${tokens[0]} must be preserved exactly. The product's position in the frame (left/right/center, top/middle/bottom), its relative size within the frame, and the surrounding negative space must match ${tokens[0]} throughout the video. Do NOT recompose, recenter, rezoom, or reframe the shot. `
+      : '';
+
     const identityLock = imageUrl
       ? `SUBJECT IDENTITY LOCK: the product's physical form — bottle silhouette, cap design, label text, logo, color, materials, and proportions — must remain pixel-stable and identical to ${tokens[0]} at every frame of the video. Do NOT morph, soften, blur, or reinterpret any product detail during motion. Treat the subject as a rigid, photographed real-world object. `
       : '';
@@ -91,7 +95,7 @@ const SeedanceAdapter = {
 
     const audioClause = 'Audio should match the visual mood of the reference image — ambient, restrained, and matching the campaign tone. No music unless explicitly requested. ';
 
-    const fullPrompt = styleClause + identityLock + motionLock + audioClause + (prompt || '').trim();
+    const fullPrompt = styleClause + compositionLock + identityLock + motionLock + audioClause + (prompt || '').trim();
 
     const input = {
       prompt: fullPrompt,
@@ -102,6 +106,12 @@ const SeedanceAdapter = {
       generate_audio: true // hardcoded — UI toggle removed; audio always on per Phase 1.5 baseline
     };
     if (imageUrl) input.image_urls = [imageUrl];
+    // Seed: include only when explicitly set by the user. Omitting the field
+    // makes fal pick a random seed each time (default behavior). Number-coerce
+    // to satisfy the model's schema; reject non-numeric input silently.
+    if (seed !== undefined && seed !== null && seed !== '' && !isNaN(Number(seed))) {
+      input.seed = Number(seed);
+    }
 
     // Direct-fetch submit (bypasses @fal-ai/client's hardcoded 3-retry policy on
     // queue.submit, which silently created up to 4 duplicate jobs when fal's
@@ -148,7 +158,7 @@ const SeedanceAdapter = {
     const cached = this._jobs[jobId];
     if (cached && (cached.status === 'complete' || cached.status === 'error')) {
       return cached.status === 'complete'
-        ? { status: 'complete', videoUrl: cached.videoUrl, videoPath: cached.videoPath }
+        ? { status: 'complete', videoUrl: cached.videoUrl, videoPath: cached.videoPath, usedSeed: cached.usedSeed ?? null }
         : { status: 'error', error: cached.error || 'Render failed.' };
     }
     // Race guard #2: if a download is already in flight from a prior poll,
@@ -184,7 +194,7 @@ const SeedanceAdapter = {
         const cachedNow = this._jobs[jobId];
         if (cachedNow && (cachedNow.status === 'complete' || cachedNow.status === 'error')) {
           return cachedNow.status === 'complete'
-            ? { status: 'complete', videoUrl: cachedNow.videoUrl, videoPath: cachedNow.videoPath }
+            ? { status: 'complete', videoUrl: cachedNow.videoUrl, videoPath: cachedNow.videoPath, usedSeed: cachedNow.usedSeed ?? null }
             : { status: 'error', error: cachedNow.error || 'Render failed.' };
         }
         if (cachedNow && cachedNow.downloadPromise) {
@@ -192,7 +202,7 @@ const SeedanceAdapter = {
         }
 
         // Fetch the result payload directly from response_url. fal returns
-        // the model output JSON (video, timings, etc.) at this URL.
+        // the model output JSON (video, timings, seed, etc.) at this URL.
         const resultRes = await fetch(responseUrl, { headers: authHeader });
         if (!resultRes.ok) {
           const body = await resultRes.text().catch(() => '');
@@ -202,6 +212,10 @@ const SeedanceAdapter = {
         }
         const resultJson = await resultRes.json();
         const videoUrl = resultJson?.video?.url || resultJson?.data?.video?.url || resultJson?.video_url || resultJson?.data?.video_url;
+        // fal surfaces the seed actually used by the model (deterministic if
+        // the caller passed one, random otherwise). Probe both shapes — the
+        // top-level field varies by endpoint/version.
+        const usedSeed = resultJson?.seed ?? resultJson?.data?.seed ?? null;
 
         // Promise-coalescing: stash the download promise on _jobs[jobId] BEFORE
         // starting the (multi-second) download. Any parallel poll that calls
@@ -231,8 +245,8 @@ const SeedanceAdapter = {
           } catch (err) {
             console.warn('[Seedance] Could not save video locally, falling back to URL only:', err.message);
           }
-          const finalResult = { status: 'complete', videoUrl, videoPath };
-          this._jobs[jobId] = { ...(this._jobs[jobId] || {}), status: 'complete', videoUrl, videoPath };
+          const finalResult = { status: 'complete', videoUrl, videoPath, usedSeed };
+          this._jobs[jobId] = { ...(this._jobs[jobId] || {}), status: 'complete', videoUrl, videoPath, usedSeed };
           return finalResult;
         })();
         this._jobs[jobId] = { ...(this._jobs[jobId] || {}), status: 'downloading', downloadPromise };

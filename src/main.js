@@ -409,7 +409,8 @@ ipcMain.handle('ai-video-render', async (_event, args) => {
   try {
     return { success: true, ...(await videoProvider.render(
       args.mp4Path, args.prompt, args.referenceFrame, args.aspectRatio,
-      args.saveFolder, args.duration, args.resolution, args.generateAudio
+      args.saveFolder, args.duration, args.resolution, args.generateAudio,
+      args.seed
     )) };
   } catch (err) { return { success: false, error: err.message }; }
 });
@@ -502,13 +503,22 @@ ipcMain.handle('ai-image-status', async (_event, { jobId }) => {
     return { success: false, error: 'Could not check status.' };
   }
 });
-ipcMain.handle('ai-upscale', async (_event, { inputPath, scale }) => {
-  try { return { success: true, ...(await upscaleProvider.upscale(inputPath, scale)) }; }
+ipcMain.handle('ai-upscale-render', async (_event, { mp4Path, desiredIncrease, saveFolder }) => {
+  console.log('[UP main handler called]', new Date().toISOString(), { mp4Path, desiredIncrease, saveFolder });
+  try { return { success: true, ...(await upscaleProvider.render(mp4Path, desiredIncrease, saveFolder)) }; }
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('ai-upscale-status', async (_event, { jobId }) => {
   try { return { success: true, ...(await upscaleProvider.checkStatus(jobId)) }; }
   catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('ai-upscale-cancel', async (_event, jobId) => {
+  try {
+    if (upscaleProvider.cancel) await upscaleProvider.cancel(jobId);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // IPC Handler: Open File Dialog (images, etc.)

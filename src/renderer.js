@@ -211,11 +211,15 @@ const pipelineState = {
   seedanceSourceNanobananaVersion: 0,
   seedanceDuration: '5',
   seedanceResolution: '1080p',
+  seedanceSeed: null,              // user-locked seed for next render (null = random)
+  seedanceUsedSeed: null,          // seed actually used by the last successful render (from fal)
 
   // Stage 5 — Upscale
   upscalePrompt: null,
-  upscaleResolution: '4k',
-  upscaleResult: null,
+  upscaleResolution: '4k',         // legacy field — kept for .ent save-file compatibility, no longer authoritative
+  upscaleScaleFactor: '2',         // Bria scale factor — only '2' or '4' accepted by adapter
+  upscaleResult: null,             // legacy — kept as { videoUrl, videoPath } for .ent compatibility
+  upscaleResultVideo: null,        // canonical path/url of the upscaled video (parallel to seedanceResultVideo)
   upscaleSkipped: false,
   upscaleVersion: 0,
   upscaleSourceSeedanceVersion: 0,
@@ -245,7 +249,7 @@ function isSeedanceStale() {
   return pipelineState.seedanceSourceNanobananaVersion !== pipelineState.nanobananaVersion;
 }
 function isUpscaleStale() {
-  if (!pipelineState.upscaleResult) return false;
+  if (!pipelineState.upscaleResultVideo && !pipelineState.upscaleResult) return false;
   if (!pipelineState.upscaleSourceSeedanceVersion) return false;
   return pipelineState.upscaleSourceSeedanceVersion !== pipelineState.seedanceVersion;
 }
@@ -338,8 +342,9 @@ function replaceStage(stepKey) {
     _regenerateSeedance();
     activateStep('seedance');
   } else if (stepKey === 'upscale') {
-    // Mission J3 (v3.0): clear the upscaled output but preserve prompt + resolution.
+    // Mission J3 (v3.0): clear the upscaled output but preserve prompt + scale factor.
     pipelineState.upscaleResult = null;
+    pipelineState.upscaleResultVideo = null;
     pipelineState.upscaleSkipped = false;
     rebuildSimplePanel();
     buildNodeEditor();
@@ -374,7 +379,7 @@ function _stepHasContent(stepKey) {
     case 'frame':      return !!pipelineState.referenceFrameImage;
     case 'nanobanana': return !!pipelineState.nanobananaResultImage;
     case 'seedance':   return !!pipelineState.seedanceResultVideo;
-    case 'upscale':    return !!pipelineState.upscaleResult;
+    case 'upscale':    return !!(pipelineState.upscaleResultVideo || pipelineState.upscaleResult);
     default: return false;
   }
 }
@@ -4049,9 +4054,13 @@ async function saveScene(saveAs = false) {
       seedanceSkipped: pipelineState.seedanceSkipped,
       seedanceVersion: pipelineState.seedanceVersion || 0,
       seedanceSourceNanobananaVersion: pipelineState.seedanceSourceNanobananaVersion || 0,
+      seedanceSeed: pipelineState.seedanceSeed,
+      seedanceUsedSeed: pipelineState.seedanceUsedSeed,
       upscalePrompt: pipelineState.upscalePrompt,
       upscaleResolution: pipelineState.upscaleResolution,
+      upscaleScaleFactor: pipelineState.upscaleScaleFactor,
       upscaleResult: pipelineState.upscaleResult,
+      upscaleResultVideo: pipelineState.upscaleResultVideo,
       upscaleSkipped: pipelineState.upscaleSkipped,
       upscaleVersion: pipelineState.upscaleVersion || 0,
       upscaleSourceSeedanceVersion: pipelineState.upscaleSourceSeedanceVersion || 0
@@ -4372,9 +4381,13 @@ async function loadScene(filePath) {
     pipelineState.seedanceReferenceImage   = p.seedanceReferenceImage || null;
     pipelineState.seedanceResultVideo      = p.seedanceResultVideo || null;
     pipelineState.seedanceSkipped          = !!p.seedanceSkipped;
+    pipelineState.seedanceSeed             = (p.seedanceSeed === undefined ? null : p.seedanceSeed);
+    pipelineState.seedanceUsedSeed         = (p.seedanceUsedSeed === undefined ? null : p.seedanceUsedSeed);
     pipelineState.upscalePrompt            = p.upscalePrompt || null;
     pipelineState.upscaleResolution        = p.upscaleResolution || '4k';
+    pipelineState.upscaleScaleFactor       = p.upscaleScaleFactor || '2';
     pipelineState.upscaleResult            = p.upscaleResult || null;
+    pipelineState.upscaleResultVideo       = p.upscaleResultVideo || null;
     pipelineState.upscaleSkipped           = !!p.upscaleSkipped;
 
     // Mission J (v3.0): version counters — default to 0 for legacy .ent files
@@ -4981,9 +4994,13 @@ function resetPipeline() {
   pipelineState.seedanceSkipped = false;
   pipelineState.seedanceVersion = 0;
   pipelineState.seedanceSourceNanobananaVersion = 0;
+  pipelineState.seedanceSeed = null;
+  pipelineState.seedanceUsedSeed = null;
   pipelineState.upscalePrompt = null;
   pipelineState.upscaleResolution = '4k';
+  pipelineState.upscaleScaleFactor = '2';
   pipelineState.upscaleResult = null;
+  pipelineState.upscaleResultVideo = null;
   pipelineState.upscaleSkipped = false;
   pipelineState.upscaleVersion = 0;
   pipelineState.upscaleSourceSeedanceVersion = 0;
@@ -5314,9 +5331,14 @@ function _bodyForStep(step) {
           ${tplBtn}
         </div>
         <textarea id="up-prompt" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
-        <div class="upscale-res-row">
-          <button class="upscale-res-btn active" data-res="4k">4K</button>
-          <button class="upscale-res-btn" data-res="8k">8K</button>
+        <div class="sd-controls-row">
+          <div class="sd-control-group">
+            <span class="sd-control-label">Scale Factor</span>
+            <div class="sd-control-buttons" data-control="upscale-factor">
+              <button type="button" class="sd-control-btn" data-value="2">2x</button>
+              <button type="button" class="sd-control-btn" data-value="4">4x</button>
+            </div>
+          </div>
         </div>
         <button id="up-generate-btn" class="pipeline-generate-btn up-generate-btn">Upscale →</button>
       </div>`;
@@ -5927,6 +5949,7 @@ let nanobananaPoller = null;
 let seedancePoller = null;
 let upscalePoller = null;
 let seedanceJobId = null;
+let upscaleJobId = null;
 const AI_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 function _stopNanobananaPoller() {
@@ -5940,6 +5963,7 @@ function _stopSeedancePoller() {
 function _stopUpscalePoller() {
   if (upscalePoller) { clearInterval(upscalePoller); upscalePoller = null; }
   upscaleInFlight = false;
+  upscaleJobId = null;
 }
 
 window.addEventListener('beforeunload', () => {
@@ -6205,7 +6229,8 @@ async function runSeedanceGenerate(scope) {
       aspectRatio: currentRatio,
       saveFolder: localStorage.getItem('refluent_mp4_folder') || null,
       duration: pipelineState.seedanceDuration || '5',
-      resolution: pipelineState.seedanceResolution || '1080p'
+      resolution: pipelineState.seedanceResolution || '1080p',
+      seed: pipelineState.seedanceSeed
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
@@ -6249,6 +6274,10 @@ async function runSeedanceGenerate(scope) {
         seedanceJobId = null;
         const videoUrl = status.videoUrl;
         const videoPath = status.videoPath || status.videoUrl;
+        // Capture the seed fal actually used (deterministic if we passed one,
+        // random otherwise). Surfaced in the result card so the user can lock
+        // it for the next render via "Use this seed".
+        pipelineState.seedanceUsedSeed = (status.usedSeed !== undefined && status.usedSeed !== null) ? status.usedSeed : null;
         showSeedanceResult(videoUrl, videoPath);
         markSceneModified();
       } else if (status.status === 'error') {
@@ -6269,27 +6298,54 @@ async function runSeedanceGenerate(scope) {
 
 async function runUpscaleGenerate(scope) {
   if (upscaleInFlight) return;
-  _syncPromptFromDom('upscale'); // optional — upscale prompt may be empty
+  if (!pipelineState.seedanceResultVideo) {
+    showToast('Need a Seedance video to upscale.');
+    return;
+  }
   upscaleInFlight = true;
-  _setGenBtns('.up-generate-btn', true, 'Upscaling…');
+  // Mission Progress: transform button into a clickable-to-cancel progress bar.
+  // Bria 2x typically completes in 30-60s for a 5-10s clip; 4x is 2-3x slower.
+  // Target 60s as a middle estimate. Cancel-on-click hits aiUpscaleCancel.
+  const upProgress = startProgressBar('.up-generate-btn', {
+    typicalDurationMs: 60000,
+    cancelable: true,
+    label: 'Upscaling — click to cancel',
+    onCancel: () => {
+      if (upscaleJobId) {
+        window.electronAPI.aiUpscaleCancel?.(upscaleJobId);
+      }
+      _stopUpscalePoller();
+      upProgress?.cleanup('Upscale →');
+      upscaleInFlight = false;
+      upscaleJobId = null;
+      showToast('Upscale cancelled');
+    }
+  });
   try {
-    const scale = pipelineState.upscaleResolution === '8k' ? 8 : 4;
-    const job = await window.electronAPI.aiUpscale({
-      inputPath: pipelineState.seedanceResultVideo,
-      scale
+    const job = await window.electronAPI.aiUpscaleRender({
+      mp4Path: pipelineState.seedanceResultVideo,
+      desiredIncrease: pipelineState.upscaleScaleFactor || '2',
+      saveFolder: localStorage.getItem('refluent_mp4_folder') || null
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Upscale failed. Please try again.');
-      _setGenBtns('.up-generate-btn', false, 'Upscale →');
+      upProgress?.cleanup('Upscale →');
+      upscaleJobId = null;
       _stopUpscalePoller();
       return;
     }
+    upscaleJobId = job.jobId;
     if (upscalePoller) clearInterval(upscalePoller);
+    // Race guard: once any poll has consumed a terminal status, suppress
+    // subsequent in-flight polls that crossed the IPC boundary before
+    // _stopUpscalePoller could clear the interval.
+    let resultConsumed = false;
     const startedAt = Date.now();
     upscalePoller = setInterval(async () => {
       if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
         _stopUpscalePoller();
-        _setGenBtns('.up-generate-btn', false, 'Upscale →');
+        upProgress?.cleanup('Upscale →');
+        upscaleJobId = null;
         showToast('Upscale is taking too long. Please try again.');
         return;
       }
@@ -6298,22 +6354,40 @@ async function runUpscaleGenerate(scope) {
         status = await window.electronAPI.aiUpscaleStatus({ jobId: job.jobId });
       } catch (e) {
         _stopUpscalePoller();
-        _setGenBtns('.up-generate-btn', false, 'Upscale →');
+        upProgress?.cleanup('Upscale →');
+        upscaleJobId = null;
         showToast('Could not check upscale status. Please try again.');
         return;
       }
       if (status.status === 'complete') {
+        if (resultConsumed) return;
+        resultConsumed = true;
         _stopUpscalePoller();
-        _setGenBtns('.up-generate-btn', false, 'Upscale →');
-        pipelineState.upscaleResult = status.outputUrl;
+        upProgress?.complete('Done ✓');
+        upscaleJobId = null;
+        const videoUrl = status.videoUrl;
+        const videoPath = status.videoPath || status.videoUrl;
+        pipelineState.upscaleResultVideo = videoPath;
+        pipelineState.upscaleResult = { videoUrl, videoPath };
+        // Mission J version commit on result land — mirrors Seedance Keep flow.
+        // Upscale has no Keep button (it's the terminal stage), so commit here.
+        pipelineState.upscaleVersion = (pipelineState.upscaleVersion || 0) + 1;
+        pipelineState.upscaleSourceSeedanceVersion = pipelineState.seedanceVersion || 0;
+        showUpscaleResult(videoUrl, videoPath);
+        refreshStaleChips();
+        markSceneModified();
       } else if (status.status === 'error') {
+        if (resultConsumed) return;
+        resultConsumed = true;
         _stopUpscalePoller();
         showToast(status.error || 'Upscale failed. Please try again.');
-        _setGenBtns('.up-generate-btn', false, 'Upscale →');
+        upProgress?.cleanup('Upscale →');
+        upscaleJobId = null;
       }
     }, 800);
   } catch (e) {
-    _setGenBtns('.up-generate-btn', false, 'Upscale →');
+    upProgress?.cleanup('Upscale →');
+    upscaleJobId = null;
     _stopUpscalePoller();
   }
 }
@@ -6450,6 +6524,29 @@ function wireSeedanceControls(scope) {
         setActive(controlName, value);
         markSceneModified();
       });
+    });
+  });
+}
+
+// Wire Bria upscale scale-factor buttons across both views. Mirrors
+// wireSeedanceControls: reads pipelineState.upscaleScaleFactor, sets .active
+// class on the matching button in both views, click handler updates state
+// and syncs the active class to the parallel button in the other view.
+function wireUpscaleControls(scope) {
+  const root = scope || document;
+  const setActive = (value) => {
+    root.querySelectorAll('[data-control="upscale-factor"] .sd-control-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.value === String(value));
+    });
+  };
+  setActive(pipelineState.upscaleScaleFactor || '2');
+  root.querySelectorAll('[data-control="upscale-factor"] .sd-control-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const value = btn.dataset.value;
+      pipelineState.upscaleScaleFactor = value;
+      setActive(value);
+      markSceneModified();
     });
   });
 }
@@ -6633,10 +6730,19 @@ function showNanobananaResult(imageUrl, imagePath) {
 }
 
 function _seedanceResultHTML(videoUrl) {
+  const usedSeed = pipelineState.seedanceUsedSeed;
+  const seedDisplay = (usedSeed !== null && usedSeed !== undefined) ? String(usedSeed) : '—';
+  const useDisabled = (usedSeed === null || usedSeed === undefined) ? 'disabled' : '';
   return `
     <div class="sd-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
       <video src="${videoUrl}" style="width:100%;display:block;cursor:zoom-in;" muted loop title="Click to view full size"></video>
       <div style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);border-radius:3px;padding:2px 6px;font-size:9px;color:rgba(255,255,255,0.7);pointer-events:none;">Click to expand</div>
+    </div>
+    <div class="sd-seed-row" style="display:flex;align-items:center;gap:6px;padding:0 6px 6px;font-size:10px;color:var(--text-secondary);">
+      <span>Seed:</span>
+      <span class="sd-used-seed-value" style="font-family:monospace;color:var(--text-primary);">${seedDisplay}</span>
+      <button class="sd-use-seed-btn" ${useDisabled} style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Use this seed</button>
+      <button class="sd-random-seed-btn" style="background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Random</button>
     </div>
     <div class="sd-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
       <button class="sd-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
@@ -6651,6 +6757,21 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
     video.addEventListener('click', () => showNanobananaFullscreen(videoUrl, videoPath));
     video.play().catch(() => {});
   }
+  // Seed controls: lock the just-used seed for the next render, or clear it
+  // so the next render uses a random seed (fal's default). Cross-view sync is
+  // implicit because we re-render the result HTML on each showSeedanceResult.
+  container.querySelector('.sd-use-seed-btn')?.addEventListener('click', () => {
+    if (pipelineState.seedanceUsedSeed !== null && pipelineState.seedanceUsedSeed !== undefined) {
+      pipelineState.seedanceSeed = pipelineState.seedanceUsedSeed;
+      showToast(`Seed ${pipelineState.seedanceUsedSeed} locked for next render`);
+      markSceneModified();
+    }
+  });
+  container.querySelector('.sd-random-seed-btn')?.addEventListener('click', () => {
+    pipelineState.seedanceSeed = null;
+    showToast('Next render will use a random seed');
+    markSceneModified();
+  });
   container.querySelector('.sd-keep-btn')?.addEventListener('click', () => {
     pipelineState.seedanceResultVideo = videoPath;
     // Mission J (v3.0): commit the Seedance output as a new version
@@ -6689,6 +6810,78 @@ function showSeedanceResult(videoUrl, videoPath) {
   if (sdNodeBody) {
     sdNodeBody.innerHTML = `<div class="node-content">${html}</div>`;
     _wireSeedanceResultButtons(sdNodeBody, videoUrl, videoPath);
+  }
+}
+
+// Upscale result UI — mirror of Seedance result, but with native controls
+// and an "Open folder" action since Upscale is the terminal pipeline stage.
+function _upscaleResultHTML(videoUrl) {
+  return `
+    <div class="up-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+      <video src="${videoUrl}" style="width:100%;display:block;" controls></video>
+    </div>
+    <div class="up-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
+      <button class="up-open-folder-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">📂 Open Folder</button>
+      <button class="up-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+    </div>`;
+}
+
+function _wireUpscaleResultButtons(container, videoUrl, videoPath) {
+  if (!container) return;
+  container.querySelector('.up-open-folder-btn')?.addEventListener('click', () => {
+    const folder = localStorage.getItem('refluent_mp4_folder');
+    if (folder && window.electronAPI?.openFolder) {
+      window.electronAPI.openFolder(folder);
+    } else {
+      showToast('No save folder configured.');
+    }
+  });
+  container.querySelector('.up-regenerate-btn')?.addEventListener('click', _regenerateUpscale);
+}
+
+function _regenerateUpscale() {
+  pipelineState.upscaleResultVideo = null;
+  pipelineState.upscaleResult = null;
+  rebuildUpscaleCardBody();
+  refreshStaleChips();
+  markSceneModified();
+}
+
+function rebuildUpscaleCardBody() {
+  const upCard = document.querySelector('.step-card[data-step-key="upscale"]');
+  const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === 'upscale');
+  if (upCard && stepDef) {
+    const bodyEl = upCard.querySelector('.step-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = _bodyForStep(stepDef);
+      wireStepCardInteractions(upCard, stepDef);
+    }
+  }
+  const upNode = document.querySelector('.node-card[data-node="upscale"]');
+  if (upNode) {
+    const upNodeBody = upNode.querySelector('.node-body');
+    if (upNodeBody) {
+      upNodeBody.innerHTML = _nodeFormBodyHTML('upscale');
+      _wireNodeFormBody('upscale', upNode);
+    }
+  }
+  // Re-wire the scale factor buttons in both views.
+  if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
+}
+
+function showUpscaleResult(videoUrl, videoPath) {
+  const html = _upscaleResultHTML(videoUrl);
+
+  const upBody = document.querySelector('.step-card[data-step-key="upscale"] .step-body');
+  if (upBody) {
+    upBody.innerHTML = html;
+    _wireUpscaleResultButtons(upBody, videoUrl, videoPath);
+  }
+
+  const upNodeBody = document.querySelector('.node-card[data-node="upscale"] .node-body');
+  if (upNodeBody) {
+    upNodeBody.innerHTML = `<div class="node-content">${html}</div>`;
+    _wireUpscaleResultButtons(upNodeBody, videoUrl, videoPath);
   }
 }
 
@@ -6802,14 +6995,9 @@ function wireStepCardInteractions(card, step) {
       });
     }
   } else if (step.id === 'upscale') {
-    card.querySelectorAll('.upscale-res-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        card.querySelectorAll('.upscale-res-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        pipelineState.upscaleResolution = btn.dataset.res;
-      });
-    });
+    // Scale-factor buttons are wired by wireUpscaleControls (called at the
+    // end of rebuildSimplePanel / rebuildUpscaleCardBody / buildNodeEditor)
+    // so cross-view sync works without duplicating logic per card.
     wireTemplateButton(card, 'upscale', 'up-prompt');
     const gen = card.querySelector('#up-generate-btn');
     if (gen) gen.addEventListener('click', (e) => { e.stopPropagation(); runUpscaleGenerate(card); });
@@ -6945,6 +7133,8 @@ function rebuildSimplePanel() {
   refreshStaleChips();
   // Mission Seedance Phase 2 (v3.0): wire duration/resolution/audio controls
   if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
+  // Mission Bria Upscale (v3.0): wire scale-factor controls
+  if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
 }
 
 rebuildSimplePanel();
@@ -7540,9 +7730,14 @@ function buildNodeEditor() {
         <button class="template-picker-btn" data-stage="upscale">⚡ Templates</button>
       </div>
       <textarea id="up-prompt-node" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
-      <div class="upscale-res-row">
-        <button class="upscale-res-btn-node upscale-res-btn active" data-res="4k">4K</button>
-        <button class="upscale-res-btn-node upscale-res-btn" data-res="8k">8K</button>
+      <div class="sd-controls-row">
+        <div class="sd-control-group">
+          <span class="sd-control-label">Scale Factor</span>
+          <div class="sd-control-buttons" data-control="upscale-factor">
+            <button type="button" class="sd-control-btn" data-value="2">2x</button>
+            <button type="button" class="sd-control-btn" data-value="4">4x</button>
+          </div>
+        </div>
       </div>
       <button class="pipeline-generate-btn up-generate-btn">Upscale →</button>
     </div>`;
@@ -7605,19 +7800,7 @@ function buildNodeEditor() {
     markSceneModified();
   });
 
-  // Wire 4K / 8K buttons
-  upNodeCard?.querySelectorAll('.upscale-res-btn-node').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      upNodeCard.querySelectorAll('.upscale-res-btn-node').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      pipelineState.upscaleResolution = btn.dataset.res;
-      // Mirror state to Simple Mode buttons
-      document.querySelectorAll('.step-card[data-step-key="upscale"] .upscale-res-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.res === btn.dataset.res);
-      });
-    });
-  });
+  // Scale-factor buttons are wired by wireUpscaleControls(document) below.
 
   // Wire frame node confirm button — same logic as Simple Mode
   frameNodeCard?.querySelector('#confirm-frame-node')?.addEventListener('click', async (e) => {
@@ -7800,6 +7983,8 @@ function buildNodeEditor() {
   refreshStaleChips();
   // Mission Seedance Phase 2 (v3.0): wire duration/resolution/audio controls
   if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
+  // Mission Bria Upscale (v3.0): wire scale-factor controls
+  if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
 }
 
 buildNodeEditor();
