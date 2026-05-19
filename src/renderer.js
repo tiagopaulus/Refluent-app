@@ -211,7 +211,6 @@ const pipelineState = {
   seedanceSourceNanobananaVersion: 0,
   seedanceDuration: '5',
   seedanceResolution: '1080p',
-  seedanceGenerateAudio: true,
 
   // Stage 5 — Upscale
   upscalePrompt: null,
@@ -5298,15 +5297,12 @@ function _bodyForStep(step) {
           <div class="sd-control-group">
             <span class="sd-control-label">Quality</span>
             <div class="sd-control-buttons" data-control="resolution">
+              <button type="button" class="sd-control-btn" data-value="480p">480p</button>
               <button type="button" class="sd-control-btn" data-value="720p">720p</button>
               <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
             </div>
           </div>
         </div>
-        <label class="sd-audio-toggle">
-          <input type="checkbox" id="sd-audio-toggle" />
-          <span>Generate Audio</span>
-        </label>
         <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
       </div>`;
   }
@@ -6209,8 +6205,7 @@ async function runSeedanceGenerate(scope) {
       aspectRatio: currentRatio,
       saveFolder: localStorage.getItem('refluent_mp4_folder') || null,
       duration: pipelineState.seedanceDuration || '5',
-      resolution: pipelineState.seedanceResolution || '1080p',
-      generateAudio: pipelineState.seedanceGenerateAudio !== false
+      resolution: pipelineState.seedanceResolution || '1080p'
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
@@ -6221,6 +6216,12 @@ async function runSeedanceGenerate(scope) {
     }
     seedanceJobId = job.jobId;
     if (seedancePoller) clearInterval(seedancePoller);
+    // Race guard: once any poll has consumed a terminal status (complete or
+    // error), suppress subsequent in-flight polls that crossed the IPC boundary
+    // before _stopSeedancePoller could clear the interval. Without this, the
+    // first poll's success would still permit polls #2 and #3 to fire toasts
+    // and rebuild the result UI multiple times.
+    let resultConsumed = false;
     const startedAt = Date.now();
     seedancePoller = setInterval(async () => {
       if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
@@ -6241,6 +6242,8 @@ async function runSeedanceGenerate(scope) {
         return;
       }
       if (status.status === 'complete') {
+        if (resultConsumed) return;
+        resultConsumed = true;
         _stopSeedancePoller();
         sdProgress?.complete('Done ✓');
         seedanceJobId = null;
@@ -6249,6 +6252,8 @@ async function runSeedanceGenerate(scope) {
         showSeedanceResult(videoUrl, videoPath);
         markSceneModified();
       } else if (status.status === 'error') {
+        if (resultConsumed) return;
+        resultConsumed = true;
         _stopSeedancePoller();
         showToast(status.error || 'Seedance render failed. Please try again.');
         sdProgress?.cleanup('Generate Video →');
@@ -6445,18 +6450,6 @@ function wireSeedanceControls(scope) {
         setActive(controlName, value);
         markSceneModified();
       });
-    });
-  });
-
-  const audioInputs = root.querySelectorAll('#sd-audio-toggle, .sd-audio-toggle-input');
-  audioInputs.forEach(input => {
-    input.checked = pipelineState.seedanceGenerateAudio !== false;
-    input.addEventListener('change', (e) => {
-      pipelineState.seedanceGenerateAudio = e.target.checked;
-      audioInputs.forEach(other => {
-        if (other !== e.target) other.checked = e.target.checked;
-      });
-      markSceneModified();
     });
   });
 }
@@ -7531,15 +7524,12 @@ function buildNodeEditor() {
         <div class="sd-control-group">
           <span class="sd-control-label">Quality</span>
           <div class="sd-control-buttons" data-control="resolution">
+            <button type="button" class="sd-control-btn" data-value="480p">480p</button>
             <button type="button" class="sd-control-btn" data-value="720p">720p</button>
             <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
           </div>
         </div>
       </div>
-      <label class="sd-audio-toggle">
-        <input type="checkbox" class="sd-audio-toggle-input" />
-        <span>Generate Audio</span>
-      </label>
       <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
     </div>`;
 
