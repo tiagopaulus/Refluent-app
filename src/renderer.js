@@ -342,12 +342,12 @@ function replaceStage(stepKey) {
     _regenerateSeedance();
     activateStep('seedance');
   } else if (stepKey === 'upscale') {
-    // Mission J3 (v3.0): clear the upscaled output but preserve prompt + scale factor.
-    pipelineState.upscaleResult = null;
-    pipelineState.upscaleResultVideo = null;
+    // Mission J3 (v3.0): surgical rebuild — only the Upscale card resets, so
+    // upstream Seedance/Nanobanana result views stay intact in the DOM.
+    // _regenerateUpscale clears upscaleResult + upscaleResultVideo and calls
+    // rebuildUpscaleCardBody (which rebuilds Simple + Node Editor views).
     pipelineState.upscaleSkipped = false;
-    rebuildSimplePanel();
-    buildNodeEditor();
+    _regenerateUpscale();
     activateStep('upscale');
   }
   refreshStaleChips();
