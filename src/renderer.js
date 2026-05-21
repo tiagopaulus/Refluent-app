@@ -5809,6 +5809,15 @@ function restorePipelineUI() {
     });
   }
 
+  // Upscale result video — render result view when previously completed.
+  // Unlike Seedance/Nanobanana, no "kept-pill" follow-up needed since Upscale
+  // is the terminal stage and has no Keep button; showUpscaleResult already
+  // renders the final action row (Open Folder + Regenerate).
+  if (pipelineState.upscaleResultVideo) {
+    const vidUrl = fileUrl(pipelineState.upscaleResultVideo);
+    showUpscaleResult(vidUrl, pipelineState.upscaleResultVideo);
+  }
+
   // Skipped states
   if (pipelineState.nanobananaSkipped) {
     document.querySelector('.step-card[data-step-key="nanobanana"]')?.classList.add('skipped');
