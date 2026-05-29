@@ -1515,6 +1515,26 @@ input[type=range] {
   cursor: not-allowed;
   pointer-events: none;
 }
+/* Secondary "upload existing file" affordance — visually subordinate to the
+   primary Generate button: smaller, muted outline, full-width below it. */
+.upload-existing-btn {
+  width: 100%;
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+  color: var(--text-dim, #9ca3af);
+  font-size: 9px;
+  padding: 4px;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.upload-existing-btn:hover {
+  background: var(--bg-elev-2, #2a2e36);
+  border-color: var(--border-hover, #3a3a3a);
+  color: var(--text-mid, #c7ccd4);
+}
 .nb-ref-images {
   display: flex;
   gap: 4px;

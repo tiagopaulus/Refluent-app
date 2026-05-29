@@ -2572,6 +2572,10 @@ let stopEaseTime = 0;
 let stopEaseDuration = 0.5;
 let stopStartPos = new THREE.Vector3();
 let stopStartQuat = new THREE.Quaternion();
+// Bug #5 (v3.0): when a non-loop move ends mid-recording, we stop the recorder
+// FIRST and defer the camera reset 2 rAFs so the reset frames aren't captured.
+// This flag holds the camera at its end pose during that defer window.
+let resetDeferred = false;
 
 // Dolly Zoom state (Mission C)
 let dzInitialized = false;
@@ -2652,20 +2656,25 @@ camPlayBtn.addEventListener('click', () => {
 });
 
 camStopBtn.addEventListener('click', () => {
-  if (camAnimState !== 'idle' && camAnimState !== 'stopping') {
-    stopStartPos.copy(camera.position);
-    stopStartQuat.copy(camera.quaternion);
-    stopEaseTime = 0;
-    camAnimState = 'stopping';
-    updateCamStatus();
-  }
-  if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording') {
-    setTimeout(() => {
-      if (mediaRecorder && mediaRecorder.state === 'recording'
-          && !stopBtn.classList.contains('hidden')) {
-        stopBtn.click();
-      }
-    }, 500);
+  const beginReset = () => {
+    if (camAnimState !== 'idle' && camAnimState !== 'stopping') {
+      stopStartPos.copy(camera.position);
+      stopStartQuat.copy(camera.quaternion);
+      stopEaseTime = 0;
+      camAnimState = 'stopping';
+      updateCamStatus();
+    }
+  };
+  const wasRecording = recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording';
+  if (wasRecording) {
+    // Bug #5 fix: stop the recorder FIRST so the reset animation isn't baked
+    // into the MP4. Two rAFs let canvas capture halt before the reset frames
+    // are drawn — no ffmpeg-conversion wait, so the viewport reset stays snappy.
+    if (!stopBtn.classList.contains('hidden')) stopBtn.click();
+    else mediaRecorder.stop();
+    requestAnimationFrame(() => requestAnimationFrame(beginReset));
+  } else {
+    beginReset();
   }
 });
 
@@ -2690,11 +2699,9 @@ updateCameraAnimation = function() {
       controls.update();
       updateCamStatus();
       animClock.stop();
-      if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording') {
-        setTimeout(() => {
-          if (!stopBtn.classList.contains('hidden')) stopBtn.click();
-        }, 500);
-      }
+      // Bug #5 fix: recorder is already stopped before the reset ease begins
+      // (see cam-stop handler + non-loop natural-end path), so no recorder-stop
+      // needed here. The reset frames are never captured.
       return false; // tell animate we are idle
     }
     const easeT = easeInOutQuad(t);
@@ -2722,6 +2729,27 @@ updateCameraAnimation = function() {
         }, 1500);
       }
     } else {
+      // Bug #5 fix: non-loop move finished. If recording, stop the recorder
+      // FIRST and defer the reset ease 2 rAFs so the reset isn't captured.
+      // resetDeferred holds the camera at its end pose during the defer window.
+      if (recordWithMovement && mediaRecorder && mediaRecorder.state === 'recording' && !resetDeferred) {
+        resetDeferred = true;
+        if (!stopBtn.classList.contains('hidden')) stopBtn.click();
+        else mediaRecorder.stop();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          stopStartPos.copy(camera.position);
+          stopStartQuat.copy(camera.quaternion);
+          stopEaseTime = 0;
+          camAnimState = 'stopping';
+          resetDeferred = false;
+          updateCamStatus();
+        }));
+        return true; // hold at end pose; reset begins when the rAF fires
+      }
+      if (resetDeferred) {
+        return true; // holding during the defer window
+      }
+      // Not recording — ease back immediately (original behavior).
       stopStartPos.copy(camera.position);
       stopStartQuat.copy(camera.quaternion);
       stopEaseTime = 0;
@@ -4700,7 +4728,9 @@ function setLayout(mode) {
     if (nodePanelEl) {
       nodePanelEl.style.display = 'flex';
       nodePanelEl.style.visibility = 'visible';
-      nodePanelEl.style.overflow = 'visible';
+      // Bug #4 fix: clip node cards to the panel so they can't bleed into the
+      // viewport when zoomed/panned. (Was 'visible', which disabled clipping.)
+      nodePanelEl.style.overflow = 'hidden';
       const savedW = parseInt(localStorage.getItem('node_panel_width'), 10)
         || Math.round(window.innerWidth * 0.35);
       const clampedW = Math.max(
@@ -4854,7 +4884,7 @@ function initNodePanelResize() {
   handle.style.cssText = `
     position: absolute;
     top: 0;
-    left: -4px;
+    left: 0;
     width: 8px;
     height: 100%;
     cursor: ew-resize;
@@ -4965,11 +4995,7 @@ function advanceFromStep(stepId) {
 function onNanobananaComplete(imagePath) {
   pipelineState.nanobananaResultImage = imagePath;
   pipelineState.seedanceReferenceImage = imagePath;
-  const refArea = document.getElementById('sd-ref-image-area');
-  if (refArea && imagePath) {
-    const imgUrl = _toMediaUrl(imagePath);
-    refArea.innerHTML = `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-  }
+  populateSeedanceVisualRef(); // fills both Simple Mode + Node Editor
   advanceFromStep('nanobanana');
 }
 
@@ -5321,6 +5347,7 @@ function _bodyForStep(step) {
           </div>
         </div>
         <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
+        <button class="upload-existing-btn" data-stage="seedance" type="button">⬆ Upload existing video</button>
       </div>`;
   }
   if (step.id === 'upscale') {
@@ -5341,6 +5368,7 @@ function _bodyForStep(step) {
           </div>
         </div>
         <button id="up-generate-btn" class="pipeline-generate-btn up-generate-btn">Upscale →</button>
+        <button class="upload-existing-btn" data-stage="upscale" type="button">⬆ Upload existing video</button>
       </div>`;
   }
   return '<div class="step-content"></div>';
@@ -5774,11 +5802,7 @@ function restorePipelineUI() {
           ✓ Image kept — ready for Seedance
         </div>`;
     });
-    const sdRefArea = document.getElementById('sd-ref-image-area');
-    if (sdRefArea && pipelineState.seedanceReferenceImage) {
-      const sdUrl = fileUrl(pipelineState.seedanceReferenceImage);
-      sdRefArea.innerHTML = `<img src="${sdUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-    }
+    populateSeedanceVisualRef();
   }
 
   // Seedance prompt textareas
@@ -6455,11 +6479,156 @@ const _NODE_PROMPT_PH  = {
   seedance:   'Describe the visual tone and style for the video...',
   upscale:    'Upscale instructions...'
 };
+// Full Node Editor body markup for Seedance/Upscale — single source of truth
+// shared by buildNodeEditor's initial build AND the rebuild path, so a Replace
+// can't strip the stage-specific controls (Bug fix: rebuild used to fall back
+// to the minimal prompt-only body via _nodeFormBodyHTML).
+function _nodeSeedanceBodyInner() {
+  return `
+    <div class="node-content seedance-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label">Visual Reference</div>
+      <div class="sd-ref-image-area-node sd-ref-image-area">Auto-filled from Nanobanana</div>
+      <button class="sd-override-ref-btn-node sd-override-ref-btn">+ Use different image</button>
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="seedance">⚡ Templates</button>
+      </div>
+      <textarea id="sd-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
+      <div class="sd-controls-row">
+        <div class="sd-control-group">
+          <span class="sd-control-label">Duration</span>
+          <div class="sd-control-buttons" data-control="duration">
+            <button type="button" class="sd-control-btn" data-value="5">5s</button>
+            <button type="button" class="sd-control-btn" data-value="8">8s</button>
+            <button type="button" class="sd-control-btn" data-value="10">10s</button>
+          </div>
+        </div>
+        <div class="sd-control-group">
+          <span class="sd-control-label">Quality</span>
+          <div class="sd-control-buttons" data-control="resolution">
+            <button type="button" class="sd-control-btn" data-value="480p">480p</button>
+            <button type="button" class="sd-control-btn" data-value="720p">720p</button>
+            <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
+          </div>
+        </div>
+      </div>
+      <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
+      <button class="upload-existing-btn" data-stage="seedance" type="button">⬆ Upload existing video</button>
+    </div>`;
+}
+
+function _nodeUpscaleBodyInner() {
+  return `
+    <div class="node-content upscale-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="upscale">⚡ Templates</button>
+      </div>
+      <textarea id="up-prompt-node" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
+      <div class="sd-controls-row">
+        <div class="sd-control-group">
+          <span class="sd-control-label">Scale Factor</span>
+          <div class="sd-control-buttons" data-control="upscale-factor">
+            <button type="button" class="sd-control-btn" data-value="2">2x</button>
+            <button type="button" class="sd-control-btn" data-value="4">4x</button>
+          </div>
+        </div>
+      </div>
+      <button class="pipeline-generate-btn up-generate-btn">Upscale →</button>
+      <button class="upload-existing-btn" data-stage="upscale" type="button">⬆ Upload existing video</button>
+    </div>`;
+}
+
 function _nodeFormBodyHTML(stage) {
+  // Seedance/Upscale: return the FULL stage body (matches initial build) so a
+  // Replace doesn't lose controls. _nodeCardHTML wraps defaultContent in a
+  // .node-body > .node-content; we mirror that wrapping here for the rebuild
+  // path which assigns this directly into .node-body.
+  if (stage === 'seedance') return `<div class="node-content">${_nodeSeedanceBodyInner()}</div>`;
+  if (stage === 'upscale')  return `<div class="node-content">${_nodeUpscaleBodyInner()}</div>`;
+  // Other stages keep the minimal prompt-only body.
   return `<div class="node-content"><div class="node-tpl-body">
       <textarea id="${_NODE_PROMPT_IDS[stage]}" class="node-prompt" rows="2" placeholder="${_NODE_PROMPT_PH[stage]}"></textarea>
       <button class="template-picker-btn" data-stage="${stage}">⚡ Templates</button>
     </div></div>`;
+}
+
+// Full Node Editor wiring for Seedance/Upscale cards — shared by buildNodeEditor
+// and the rebuild path so behavior (generate, override, template, prompt sync)
+// is identical no matter how the body was created.
+function _wireSeedanceNodeCard(sdNode) {
+  if (!sdNode) return;
+  sdNode.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('seedance', 'sd-prompt-node');
+  });
+  sdNode.querySelector('.sd-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runSeedanceGenerate(sdNode);
+  });
+  sdNode.querySelector('.sd-override-ref-btn-node')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const filePath = await window.electronAPI.openFileDialog({
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    });
+    if (!filePath) return;
+    pipelineState.seedanceReferenceImage = filePath;
+    const safe = _toMediaUrl(filePath);
+    document.querySelectorAll('.sd-ref-image-area, .sd-ref-image-area-node, #sd-ref-image-area').forEach(area => {
+      area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+    });
+    markSceneModified();
+  });
+  const ta = sdNode.querySelector('#sd-prompt-node');
+  if (ta) {
+    if (pipelineState.seedancePrompt) ta.value = pipelineState.seedancePrompt;
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    ta.addEventListener('mousedown', (e) => e.stopPropagation());
+    ta.addEventListener('input', () => {
+      pipelineState.seedancePrompt = ta.value;
+      const other = document.getElementById('sd-prompt');
+      if (other && other.value !== ta.value) other.value = ta.value;
+      markSceneModified();
+    });
+  }
+}
+
+// Populate the Seedance "Visual Reference" thumbnail in BOTH views. The Simple
+// Mode element has id="sd-ref-image-area"; the Node Editor element has classes
+// "sd-ref-image-area-node sd-ref-image-area" (no id). Both share the
+// .sd-ref-image-area class, so a single querySelectorAll covers both — fixing
+// the bug where getElementById('sd-ref-image-area') only hit Simple Mode.
+function populateSeedanceVisualRef() {
+  const ref = pipelineState.seedanceReferenceImage;
+  if (!ref) return;
+  const url = _toMediaUrl(ref);
+  document.querySelectorAll('.sd-ref-image-area').forEach(area => {
+    area.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
+  });
+}
+
+function _wireUpscaleNodeCard(upNode) {
+  if (!upNode) return;
+  upNode.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('upscale', 'up-prompt-node');
+  });
+  upNode.querySelector('.up-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runUpscaleGenerate(upNode);
+  });
+  const ta = upNode.querySelector('#up-prompt-node');
+  if (ta) {
+    if (pipelineState.upscalePrompt) ta.value = pipelineState.upscalePrompt;
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    ta.addEventListener('mousedown', (e) => e.stopPropagation());
+    ta.addEventListener('input', () => {
+      pipelineState.upscalePrompt = ta.value;
+      const other = document.getElementById('up-prompt');
+      if (other && other.value !== ta.value) other.value = ta.value;
+      markSceneModified();
+    });
+  }
 }
 function _wireNodeFormBody(stage, nodeEl) {
   if (!nodeEl) return;
@@ -6560,6 +6729,57 @@ function wireUpscaleControls(scope) {
   });
 }
 
+// Bug #2 (v3.0): let users drop in an existing .mp4 for the Seedance/Upscale
+// stage instead of re-running generation. Uploaded files are copied into the
+// save folder (via copy-file-into-folder IPC) so they behave identically to
+// generated ones, then routed through the same showXxxResult + version-bump
+// flow so downstream staleness stays correct. Idempotent via data-wired flag.
+function applyUploadedSeedance(videoPath) {
+  pipelineState.seedanceResultVideo = videoPath;
+  pipelineState.seedanceVersion = (pipelineState.seedanceVersion || 0) + 1;
+  pipelineState.seedanceSourceNanobananaVersion = pipelineState.nanobananaVersion || 0;
+  showSeedanceResult(_toMediaUrl(videoPath), videoPath);
+  refreshStaleChips();
+  markSceneModified();
+}
+
+function applyUploadedUpscale(videoPath) {
+  pipelineState.upscaleResultVideo = videoPath;
+  pipelineState.upscaleResult = { videoUrl: _toMediaUrl(videoPath), videoPath };
+  pipelineState.upscaleVersion = (pipelineState.upscaleVersion || 0) + 1;
+  pipelineState.upscaleSourceSeedanceVersion = pipelineState.seedanceVersion || 0;
+  showUpscaleResult(_toMediaUrl(videoPath), videoPath);
+  refreshStaleChips();
+  markSceneModified();
+}
+
+function wireUploadExistingButtons(scope) {
+  const root = scope || document;
+  root.querySelectorAll('.upload-existing-btn').forEach(btn => {
+    if (btn.dataset.wired === '1') return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const stage = btn.dataset.stage;
+      const sourcePath = await window.electronAPI.openFileDialog({
+        filters: [{ name: 'Video', extensions: ['mp4'] }]
+      });
+      if (!sourcePath) return;
+      const res = await window.electronAPI.copyFileIntoFolder({
+        sourcePath,
+        destFolder: localStorage.getItem('refluent_mp4_folder') || null,
+        prefix: stage === 'seedance' ? 'SD' : 'UP'
+      });
+      if (!res || !res.success) {
+        showToast((res && res.error) || 'Could not import the file. Please try again.');
+        return;
+      }
+      if (stage === 'seedance') applyUploadedSeedance(res.destPath);
+      else if (stage === 'upscale') applyUploadedUpscale(res.destPath);
+    });
+  });
+}
+
 function rebuildSeedanceCardBody() {
   const sdCard = document.querySelector('.step-card[data-step-key="seedance"]');
   const stepDef = (typeof stepDefs !== 'undefined' ? stepDefs : []).find(s => s.id === 'seedance');
@@ -6570,17 +6790,22 @@ function rebuildSeedanceCardBody() {
       wireStepCardInteractions(sdCard, stepDef);
     }
   }
-  // Also rebuild Node Editor node body
+  // Also rebuild Node Editor node body — full markup + full wiring so the
+  // rebuilt node matches the initial build (controls, generate, override, upload).
   const sdNode = document.querySelector('.node-card[data-node="seedance"]');
   if (sdNode) {
     const sdNodeBody = sdNode.querySelector('.node-body');
     if (sdNodeBody) {
       sdNodeBody.innerHTML = _nodeFormBodyHTML('seedance');
-      _wireNodeFormBody('seedance', sdNode);
+      _wireSeedanceNodeCard(sdNode);
     }
   }
-  // Re-wire the new duration/resolution/audio controls in both views
+  // Re-wire the duration/resolution controls + upload buttons in both views
   wireSeedanceControls(document);
+  wireUploadExistingButtons(document);
+  // Repopulate the Visual Reference thumbnail in both views (the freshly-built
+  // node body starts with the "Auto-filled from Nanobanana" placeholder).
+  populateSeedanceVisualRef();
 }
 
 function _nanobananaResultHTML(imageUrl) {
@@ -6670,13 +6895,7 @@ function _regenerateSeedance() {
     if (sdPrompt) sdPrompt.value = savedPrompt;
     const sdPromptNode = document.getElementById('sd-prompt-node');
     if (sdPromptNode) sdPromptNode.value = savedPrompt;
-    if (savedRef) {
-      const sdRefArea = document.getElementById('sd-ref-image-area');
-      if (sdRefArea) {
-        const refUrl = _toMediaUrl(savedRef);
-        sdRefArea.innerHTML = `<img src="${refUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-      }
-    }
+    if (savedRef) populateSeedanceVisualRef(); // both views
     if (typeof wirePromptEditorTriggers === 'function') wirePromptEditorTriggers();
   }, 50);
 }
@@ -6694,11 +6913,8 @@ function _wireNanobananaResultButtons(container, imageUrl, imagePath) {
     pipelineState.nanobananaSourceFrameVersion = pipelineState.frameVersion || 0;
     refreshStaleChips();
 
-    // Auto-fill seedance reference area in Simple Mode
-    const sdRefArea = document.getElementById('sd-ref-image-area');
-    if (sdRefArea) {
-      sdRefArea.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-    }
+    // Auto-fill seedance reference area in BOTH Simple Mode + Node Editor
+    populateSeedanceVisualRef();
 
     // Replace the Keep/Regenerate row with "kept" status in BOTH views,
     // with a small ↺ button next to it so the user can still regenerate.
@@ -6743,29 +6959,28 @@ function _seedanceResultHTML(videoUrl) {
   const seedDisplay = (usedSeed !== null && usedSeed !== undefined) ? String(usedSeed) : '—';
   const useDisabled = (usedSeed === null || usedSeed === undefined) ? 'disabled' : '';
   return `
-    <div class="sd-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
-      <video src="${videoUrl}" style="width:100%;display:block;cursor:zoom-in;" muted loop title="Click to view full size"></video>
-      <div style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);border-radius:3px;padding:2px 6px;font-size:9px;color:rgba(255,255,255,0.7);pointer-events:none;">Click to expand</div>
-    </div>
-    <div class="sd-seed-row" style="display:flex;align-items:center;gap:6px;padding:0 6px 6px;font-size:10px;color:var(--text-secondary);">
-      <span>Seed:</span>
-      <span class="sd-used-seed-value" style="font-family:monospace;color:var(--text-primary);">${seedDisplay}</span>
-      <button class="sd-use-seed-btn" ${useDisabled} style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Use this seed</button>
-      <button class="sd-random-seed-btn" style="background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Random</button>
-    </div>
-    <div class="sd-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
-      <button class="sd-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
-      <button class="sd-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+    <div class="sd-result-body" style="display:flex;flex-direction:column;width:100%;">
+      <div class="sd-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+        <video src="${videoUrl}" style="width:100%;display:block;" controls></video>
+      </div>
+      <div class="sd-seed-row" style="display:flex;align-items:center;gap:6px;padding:0 6px 6px;font-size:10px;color:var(--text-secondary);">
+        <span>Seed:</span>
+        <span class="sd-used-seed-value" style="font-family:monospace;color:var(--text-primary);">${seedDisplay}</span>
+        <button class="sd-use-seed-btn" ${useDisabled} style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Use this seed</button>
+        <button class="sd-random-seed-btn" style="background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Random</button>
+      </div>
+      <div class="sd-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
+        <button class="sd-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
+        <button class="sd-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+      </div>
     </div>`;
 }
 
 function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
   if (!container) return;
-  const video = container.querySelector('video');
-  if (video) {
-    video.addEventListener('click', () => showNanobananaFullscreen(videoUrl, videoPath));
-    video.play().catch(() => {});
-  }
+  // Native <video controls> now handle play/pause/scrub/fullscreen — no JS
+  // click-to-expand or autoplay (both conflicted with the control bar and the
+  // no-autoplay intent). Mirrors _wireUpscaleResultButtons, which has no video handler.
   // Seed controls: lock the just-used seed for the next render, or clear it
   // so the next render uses a random seed (fal's default). Cross-view sync is
   // implicit because we re-render the result HTML on each showSeedanceResult.
@@ -6826,12 +7041,14 @@ function showSeedanceResult(videoUrl, videoPath) {
 // and an "Open folder" action since Upscale is the terminal pipeline stage.
 function _upscaleResultHTML(videoUrl) {
   return `
-    <div class="up-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
-      <video src="${videoUrl}" style="width:100%;display:block;" controls></video>
-    </div>
-    <div class="up-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
-      <button class="up-open-folder-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">📂 Open Folder</button>
-      <button class="up-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+    <div class="up-result-body" style="display:flex;flex-direction:column;width:100%;">
+      <div class="up-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+        <video src="${videoUrl}" style="width:100%;display:block;" controls></video>
+      </div>
+      <div class="up-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
+        <button class="up-open-folder-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">📂 Open Folder</button>
+        <button class="up-regenerate-btn" style="flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:7px;cursor:pointer;font-family:var(--font);">↺ Regenerate</button>
+      </div>
     </div>`;
 }
 
@@ -6871,11 +7088,12 @@ function rebuildUpscaleCardBody() {
     const upNodeBody = upNode.querySelector('.node-body');
     if (upNodeBody) {
       upNodeBody.innerHTML = _nodeFormBodyHTML('upscale');
-      _wireNodeFormBody('upscale', upNode);
+      _wireUpscaleNodeCard(upNode);
     }
   }
-  // Re-wire the scale factor buttons in both views.
+  // Re-wire the scale factor buttons + upload buttons in both views.
   if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
+  if (typeof wireUploadExistingButtons === 'function') wireUploadExistingButtons(document);
 }
 
 function showUpscaleResult(videoUrl, videoPath) {
@@ -7144,6 +7362,10 @@ function rebuildSimplePanel() {
   if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
   // Mission Bria Upscale (v3.0): wire scale-factor controls
   if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
+  // Bug #2 (v3.0): wire "Upload existing video" buttons (Seedance + Upscale)
+  if (typeof wireUploadExistingButtons === 'function') wireUploadExistingButtons(document);
+  // Fill the Seedance Visual Reference thumbnail if a result already exists
+  if (typeof populateSeedanceVisualRef === 'function') populateSeedanceVisualRef();
 }
 
 rebuildSimplePanel();
@@ -7701,55 +7923,10 @@ function buildNodeEditor() {
       <button class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
     </div>`;
 
-  const nodeSeedanceBody = `
-    <div class="node-content seedance-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
-      <div class="pipeline-label">Visual Reference</div>
-      <div class="sd-ref-image-area-node sd-ref-image-area">Auto-filled from Nanobanana</div>
-      <button class="sd-override-ref-btn-node sd-override-ref-btn">+ Use different image</button>
-      <div class="pipeline-label-row">
-        <span class="pipeline-label">Prompt</span>
-        <button class="template-picker-btn" data-stage="seedance">⚡ Templates</button>
-      </div>
-      <textarea id="sd-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe the visual tone and style for the video..."></textarea>
-      <div class="sd-controls-row">
-        <div class="sd-control-group">
-          <span class="sd-control-label">Duration</span>
-          <div class="sd-control-buttons" data-control="duration">
-            <button type="button" class="sd-control-btn" data-value="5">5s</button>
-            <button type="button" class="sd-control-btn" data-value="8">8s</button>
-            <button type="button" class="sd-control-btn" data-value="10">10s</button>
-          </div>
-        </div>
-        <div class="sd-control-group">
-          <span class="sd-control-label">Quality</span>
-          <div class="sd-control-buttons" data-control="resolution">
-            <button type="button" class="sd-control-btn" data-value="480p">480p</button>
-            <button type="button" class="sd-control-btn" data-value="720p">720p</button>
-            <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
-          </div>
-        </div>
-      </div>
-      <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
-    </div>`;
-
-  const nodeUpscaleBody = `
-    <div class="node-content upscale-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
-      <div class="pipeline-label-row">
-        <span class="pipeline-label">Prompt</span>
-        <button class="template-picker-btn" data-stage="upscale">⚡ Templates</button>
-      </div>
-      <textarea id="up-prompt-node" class="pipeline-prompt" rows="2" placeholder="Upscale instructions..."></textarea>
-      <div class="sd-controls-row">
-        <div class="sd-control-group">
-          <span class="sd-control-label">Scale Factor</span>
-          <div class="sd-control-buttons" data-control="upscale-factor">
-            <button type="button" class="sd-control-btn" data-value="2">2x</button>
-            <button type="button" class="sd-control-btn" data-value="4">4x</button>
-          </div>
-        </div>
-      </div>
-      <button class="pipeline-generate-btn up-generate-btn">Upscale →</button>
-    </div>`;
+  // Seedance/Upscale node bodies come from the shared markup helpers so the
+  // initial build and the Replace-rebuild path are guaranteed identical.
+  const nodeSeedanceBody = _nodeSeedanceBodyInner();
+  const nodeUpscaleBody = _nodeUpscaleBodyInner();
 
   nodePanelEl.innerHTML =
     _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
@@ -7768,48 +7945,22 @@ function buildNodeEditor() {
     e.stopPropagation();
     showTemplatePicker('nanobanana', 'nb-prompt-node');
   });
-  sdNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showTemplatePicker('seedance', 'sd-prompt-node');
-  });
-  upNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showTemplatePicker('upscale', 'up-prompt-node');
-  });
 
   // Wire ref image slots inside the nanobanana node (uses shared scope-aware function)
   if (nbNodeCard) wireRefImageSlots(nbNodeCard);
 
-  // Wire Generate buttons
+  // Wire Nanobanana Generate button
   nbNodeCard?.querySelector('.nb-generate-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     runNanobananaGenerate(nbNodeCard);
   });
-  sdNodeCard?.querySelector('.sd-generate-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    runSeedanceGenerate(sdNodeCard);
-  });
-  upNodeCard?.querySelector('.up-generate-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    runUpscaleGenerate(upNodeCard);
-  });
 
-  // Wire Seedance "Use different image" override
-  sdNodeCard?.querySelector('.sd-override-ref-btn-node')?.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const filePath = await window.electronAPI.openFileDialog({
-      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
-    });
-    if (!filePath) return;
-    pipelineState.seedanceReferenceImage = filePath;
-    const safe = _toMediaUrl(filePath);
-    document.querySelectorAll('.sd-ref-image-area, .sd-ref-image-area-node, #sd-ref-image-area').forEach(area => {
-      area.innerHTML = `<img src="${safe}" style="width:100%;height:100%;object-fit:cover;border-radius:3px;">`;
-    });
-    markSceneModified();
-  });
-
-  // Scale-factor buttons are wired by wireUpscaleControls(document) below.
+  // Seedance/Upscale node cards: full wiring via the shared helpers (template,
+  // generate, override, prompt sync) so it matches the Replace-rebuild path.
+  _wireSeedanceNodeCard(sdNodeCard);
+  _wireUpscaleNodeCard(upNodeCard);
+  // Scale-factor / duration / quality buttons are wired by wireUpscaleControls
+  // / wireSeedanceControls(document) below.
 
   // Wire frame node confirm button — same logic as Simple Mode
   frameNodeCard?.querySelector('#confirm-frame-node')?.addEventListener('click', async (e) => {
@@ -7994,6 +8145,10 @@ function buildNodeEditor() {
   if (typeof wireSeedanceControls === 'function') wireSeedanceControls(document);
   // Mission Bria Upscale (v3.0): wire scale-factor controls
   if (typeof wireUpscaleControls === 'function') wireUpscaleControls(document);
+  // Bug #2 (v3.0): wire "Upload existing video" buttons (Seedance + Upscale)
+  if (typeof wireUploadExistingButtons === 'function') wireUploadExistingButtons(document);
+  // Fill the Seedance Visual Reference thumbnail if a result already exists
+  if (typeof populateSeedanceVisualRef === 'function') populateSeedanceVisualRef();
 }
 
 buildNodeEditor();

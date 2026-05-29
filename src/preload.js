@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiUpscaleRender: (args) => ipcRenderer.invoke('ai-upscale-render', args),
   aiUpscaleStatus: (args) => ipcRenderer.invoke('ai-upscale-status', args),
   aiUpscaleCancel: (jobId) => ipcRenderer.invoke('ai-upscale-cancel', jobId),
+  copyFileIntoFolder: (args) => ipcRenderer.invoke('copy-file-into-folder', args),
   // Unsaved changes / quit flow
   setUnsavedChanges: (hasChanges) => ipcRenderer.invoke('set-unsaved-changes', hasChanges),
   onRequestSaveCheck: (callback) => ipcRenderer.on('request-save-check', callback),

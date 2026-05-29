@@ -530,6 +530,35 @@ ipcMain.handle('open-file-dialog', async (_event, options) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+// Copy an uploaded file into the user's save folder with a Refluent_<prefix>_NNN.mp4
+// auto-incrementing name, so uploaded files behave identically to generated ones
+// (survive moves, travel with the .ent). Falls back to the OS temp dir if no
+// destFolder is set or it doesn't exist.
+ipcMain.handle('copy-file-into-folder', async (_event, { sourcePath, destFolder, prefix }) => {
+  try {
+    const os = require('os');
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return { success: false, error: 'Source file not found.' };
+    }
+    const folder = (destFolder && fs.existsSync(destFolder)) ? destFolder : os.tmpdir();
+    const tag = (prefix || 'UP').toUpperCase();
+    const re = new RegExp(`^Refluent_${tag}_(\\d{3})\\.mp4$`, 'i');
+    let max = 0;
+    try {
+      for (const f of fs.readdirSync(folder)) {
+        const m = f.match(re);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+    } catch { /* ignore unreadable folder */ }
+    const filename = `Refluent_${tag}_${String(max + 1).padStart(3, '0')}.mp4`;
+    const destPath = path.join(folder, filename);
+    await fsp.copyFile(sourcePath, destPath);
+    return { success: true, destPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC Handler: Open Model Dialog
 ipcMain.handle('dialog:openModel', async () => {
   const result = await dialog.showOpenDialog({
