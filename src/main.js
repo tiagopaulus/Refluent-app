@@ -627,6 +627,14 @@ ipcMain.handle('ffmpeg:convertWebmToMp4', async (event, { arrayBuffer, duration,
           '-crf', '18',
           '-preset', 'slow',
           '-movflags', '+faststart',
+          // Pin output to constant 30fps. MediaRecorder writes variable-frame-rate
+          // WebM (wall-clock timestamps); without this, ffmpeg stamps the MP4's
+          // r_frame_rate from the smallest inter-frame delta — which on a high-
+          // refresh display can exceed 60 and gets rejected by ByteDance Seedance
+          // r2v ("video frame rate must be <= 60"). Source is captureStream(30),
+          // so 30fps CFR is lossless.
+          '-r', '30',
+          '-vsync', 'cfr',
           '-vf', vfFilter
         ])
         .save(tempMp4Path)

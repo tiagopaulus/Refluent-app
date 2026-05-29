@@ -2640,17 +2640,20 @@ button, .btn-label, .layer-item-name,
 }
 
 /* Mission Progress: button-as-progress-bar */
-.pipeline-generate-btn.progress-mode {
+.pipeline-generate-btn.progress-mode,
+.sd-upgrade-btn.progress-mode {
   position: relative;
   overflow: hidden;
   pointer-events: none; /* default: not cancelable */
   cursor: default;
 }
-.pipeline-generate-btn.progress-mode.progress-cancelable {
+.pipeline-generate-btn.progress-mode.progress-cancelable,
+.sd-upgrade-btn.progress-mode.progress-cancelable {
   pointer-events: auto;
   cursor: pointer;
 }
-.pipeline-generate-btn.progress-mode.progress-cancelable:hover .progress-bar-label::after {
+.pipeline-generate-btn.progress-mode.progress-cancelable:hover .progress-bar-label::after,
+.sd-upgrade-btn.progress-mode.progress-cancelable:hover .progress-bar-label::after {
   content: ' ✕';
   opacity: 0.7;
 }

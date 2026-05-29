@@ -210,9 +210,12 @@ const pipelineState = {
   seedanceVersion: 0,
   seedanceSourceNanobananaVersion: 0,
   seedanceDuration: '5',
-  seedanceResolution: '1080p',
+  seedanceResolution: '1080p',     // UNUSED by two-pass workflow — kept for .ent back-compat
   seedanceSeed: null,              // user-locked seed for next render (null = random)
   seedanceUsedSeed: null,          // seed actually used by the last successful render (from fal)
+  seedancePreviewVideo: null,      // 480p preview file path (first pass)
+  seedanceFinalResolution: null,   // '480p' | '720p' | '1080p' — resolution of the visible result
+  seedanceLockedAspectRatio: null, // frozen at first gen; reused for upgrades (ignores live #ratio-select)
 
   // Stage 5 — Upscale
   upscalePrompt: null,
@@ -4084,6 +4087,9 @@ async function saveScene(saveAs = false) {
       seedanceSourceNanobananaVersion: pipelineState.seedanceSourceNanobananaVersion || 0,
       seedanceSeed: pipelineState.seedanceSeed,
       seedanceUsedSeed: pipelineState.seedanceUsedSeed,
+      seedancePreviewVideo: pipelineState.seedancePreviewVideo,
+      seedanceFinalResolution: pipelineState.seedanceFinalResolution,
+      seedanceLockedAspectRatio: pipelineState.seedanceLockedAspectRatio,
       upscalePrompt: pipelineState.upscalePrompt,
       upscaleResolution: pipelineState.upscaleResolution,
       upscaleScaleFactor: pipelineState.upscaleScaleFactor,
@@ -4411,6 +4417,9 @@ async function loadScene(filePath) {
     pipelineState.seedanceSkipped          = !!p.seedanceSkipped;
     pipelineState.seedanceSeed             = (p.seedanceSeed === undefined ? null : p.seedanceSeed);
     pipelineState.seedanceUsedSeed         = (p.seedanceUsedSeed === undefined ? null : p.seedanceUsedSeed);
+    pipelineState.seedancePreviewVideo     = p.seedancePreviewVideo || null;
+    pipelineState.seedanceFinalResolution  = p.seedanceFinalResolution || null;
+    pipelineState.seedanceLockedAspectRatio = p.seedanceLockedAspectRatio || null;
     pipelineState.upscalePrompt            = p.upscalePrompt || null;
     pipelineState.upscaleResolution        = p.upscaleResolution || '4k';
     pipelineState.upscaleScaleFactor       = p.upscaleScaleFactor || '2';
@@ -5022,6 +5031,9 @@ function resetPipeline() {
   pipelineState.seedanceSourceNanobananaVersion = 0;
   pipelineState.seedanceSeed = null;
   pipelineState.seedanceUsedSeed = null;
+  pipelineState.seedancePreviewVideo = null;
+  pipelineState.seedanceFinalResolution = null;
+  pipelineState.seedanceLockedAspectRatio = null;
   pipelineState.upscalePrompt = null;
   pipelineState.upscaleResolution = '4k';
   pipelineState.upscaleScaleFactor = '2';
@@ -5337,16 +5349,8 @@ function _bodyForStep(step) {
               <button type="button" class="sd-control-btn" data-value="10">10s</button>
             </div>
           </div>
-          <div class="sd-control-group">
-            <span class="sd-control-label">Quality</span>
-            <div class="sd-control-buttons" data-control="resolution">
-              <button type="button" class="sd-control-btn" data-value="480p">480p</button>
-              <button type="button" class="sd-control-btn" data-value="720p">720p</button>
-              <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
-            </div>
-          </div>
         </div>
-        <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
+        <button id="sd-generate-btn" class="pipeline-generate-btn sd-generate-btn">Generate Preview (480p) →</button>
         <button class="upload-existing-btn" data-stage="seedance" type="button">⬆ Upload existing video</button>
       </div>`;
   }
@@ -5992,6 +5996,11 @@ function _stopNanobananaPoller() {
 function _stopSeedancePoller() {
   if (seedancePoller) { clearInterval(seedancePoller); seedancePoller = null; }
   seedanceInFlight = false;
+  // Two-pass: re-enable any upgrade buttons dimmed during an in-flight upgrade.
+  // On success the result card re-renders with fresh buttons; on error/cancel/
+  // timeout (no re-render) this restores the dimmed sibling(s). Idempotent —
+  // a normal preview generation has no .sd-upgrade-btn on screen.
+  document.querySelectorAll('.sd-upgrade-btn').forEach(b => { b.disabled = false; b.style.opacity = ''; });
 }
 function _stopUpscalePoller() {
   if (upscalePoller) { clearInterval(upscalePoller); upscalePoller = null; }
@@ -6225,36 +6234,46 @@ async function runNanobananaGenerate(scope) {
   }
 }
 
-async function runSeedanceGenerate(scope) {
-  console.log('[SD render-call]', new Date().toISOString(), 'inFlight=', seedanceInFlight);
+async function runSeedanceGenerate(scope, forcedResolution = '480p', progressTargetSelector = '.sd-generate-btn') {
+  console.log('[SD render-call]', new Date().toISOString(), 'inFlight=', seedanceInFlight, 'res=', forcedResolution);
   if (seedanceInFlight) return;
   if (!_syncPromptFromDom('seedance')) {
     showToast('Please enter a prompt first.');
     return;
   }
   seedanceInFlight = true;
-  // Mission Progress: transform button into a clickable-to-cancel progress
-  // bar. Seedance 1080p typically completes in 90-180s — target 150s as a
-  // middle estimate. Cancel-on-click hits fal.queue.cancel.
-  const sdProgress = startProgressBar('.sd-generate-btn', {
+  // Mission Progress: transform a button into a clickable-to-cancel progress
+  // bar. Default target is the Generate button; an UPGRADE retargets the bar
+  // to the clicked upgrade button (which is the only one on screen — the form
+  // is hidden behind the result card). Labels adapt to the mode.
+  const isUpgrade = progressTargetSelector !== '.sd-generate-btn';
+  const progressLabel = isUpgrade ? `Upgrading to ${forcedResolution} — click to cancel` : 'Rendering — click to cancel';
+  const restoreLabel = isUpgrade ? `↑ Upgrade to ${forcedResolution}` : 'Generate Preview (480p) →';
+  const sdProgress = startProgressBar(progressTargetSelector, {
     typicalDurationMs: 150000,
     cancelable: true,
-    label: 'Rendering — click to cancel',
+    label: progressLabel,
     onCancel: () => {
       if (seedanceJobId) {
         window.electronAPI.aiVideoCancel?.(seedanceJobId);
       }
       _stopSeedancePoller();
-      sdProgress?.cleanup('Generate Video →');
+      sdProgress?.cleanup(restoreLabel);
       seedanceInFlight = false;
       seedanceJobId = null;
       showToast('Seedance render cancelled');
     }
   });
   try {
-    const ratioSelect = document.getElementById('ratio-select');
-    const currentRatio = ratioSelect ? ratioSelect.value : '16:9';
-    console.log('[SD ipc-call]', new Date().toISOString());
+    // Aspect ratio is frozen per-job on the first (preview) generation so an
+    // upgrade renders at the same aspect even if the user later changes the
+    // live #ratio-select. Lock it if not already set; reuse the locked value.
+    if (!pipelineState.seedanceLockedAspectRatio) {
+      const ratioSelect = document.getElementById('ratio-select');
+      pipelineState.seedanceLockedAspectRatio = ratioSelect ? ratioSelect.value : '16:9';
+    }
+    const currentRatio = pipelineState.seedanceLockedAspectRatio;
+    console.log('[SD ipc-call]', new Date().toISOString(), 'res=', forcedResolution, 'ratio=', currentRatio);
     const job = await window.electronAPI.aiVideoRender({
       mp4Path: pipelineState.mp4Path,
       prompt: pipelineState.seedancePrompt,
@@ -6262,12 +6281,12 @@ async function runSeedanceGenerate(scope) {
       aspectRatio: currentRatio,
       saveFolder: localStorage.getItem('refluent_mp4_folder') || null,
       duration: pipelineState.seedanceDuration || '5',
-      resolution: pipelineState.seedanceResolution || '1080p',
+      resolution: forcedResolution,
       seed: pipelineState.seedanceSeed
     });
     if (!job || !job.success) {
       showToast((job && job.error) || 'Render failed. Please try again.');
-      sdProgress?.cleanup('Generate Video →');
+      sdProgress?.cleanup(restoreLabel);
       seedanceJobId = null;
       _stopSeedancePoller();
       return;
@@ -6284,7 +6303,7 @@ async function runSeedanceGenerate(scope) {
     seedancePoller = setInterval(async () => {
       if (Date.now() - startedAt > AI_POLL_TIMEOUT_MS) {
         _stopSeedancePoller();
-        sdProgress?.cleanup('Generate Video →');
+        sdProgress?.cleanup(restoreLabel);
         seedanceJobId = null;
         showToast('Seedance is taking too long. Please try again.');
         return;
@@ -6294,7 +6313,7 @@ async function runSeedanceGenerate(scope) {
         status = await window.electronAPI.aiVideoStatus({ jobId: job.jobId });
       } catch (e) {
         _stopSeedancePoller();
-        sdProgress?.cleanup('Generate Video →');
+        sdProgress?.cleanup(restoreLabel);
         seedanceJobId = null;
         showToast('Could not check Seedance status. Please try again.');
         return;
@@ -6311,6 +6330,11 @@ async function runSeedanceGenerate(scope) {
         // random otherwise). Surfaced in the result card so the user can lock
         // it for the next render via "Use this seed".
         pipelineState.seedanceUsedSeed = (status.usedSeed !== undefined && status.usedSeed !== null) ? status.usedSeed : null;
+        // Two-pass tracking: record the resolution of the visible result, and
+        // (on the first/preview pass) the 480p file path so the upgrade flow
+        // knows the preview survives on disk.
+        pipelineState.seedanceFinalResolution = forcedResolution;
+        if (forcedResolution === '480p') pipelineState.seedancePreviewVideo = videoPath;
         showSeedanceResult(videoUrl, videoPath);
         markSceneModified();
       } else if (status.status === 'error') {
@@ -6318,12 +6342,12 @@ async function runSeedanceGenerate(scope) {
         resultConsumed = true;
         _stopSeedancePoller();
         showToast(status.error || 'Seedance render failed. Please try again.');
-        sdProgress?.cleanup('Generate Video →');
+        sdProgress?.cleanup(restoreLabel);
         seedanceJobId = null;
       }
     }, 800);
   } catch (e) {
-    sdProgress?.cleanup('Generate Video →');
+    sdProgress?.cleanup(restoreLabel);
     seedanceJobId = null;
     _stopSeedancePoller();
   }
@@ -6503,16 +6527,8 @@ function _nodeSeedanceBodyInner() {
             <button type="button" class="sd-control-btn" data-value="10">10s</button>
           </div>
         </div>
-        <div class="sd-control-group">
-          <span class="sd-control-label">Quality</span>
-          <div class="sd-control-buttons" data-control="resolution">
-            <button type="button" class="sd-control-btn" data-value="480p">480p</button>
-            <button type="button" class="sd-control-btn" data-value="720p">720p</button>
-            <button type="button" class="sd-control-btn" data-value="1080p">1080p</button>
-          </div>
-        </div>
       </div>
-      <button class="pipeline-generate-btn sd-generate-btn">Generate Video →</button>
+      <button class="pipeline-generate-btn sd-generate-btn">Generate Preview (480p) →</button>
       <button class="upload-existing-btn" data-stage="seedance" type="button">⬆ Upload existing video</button>
     </div>`;
 }
@@ -6683,25 +6699,22 @@ function rebuildNanobananaCardBody() {
 function wireSeedanceControls(scope) {
   const root = scope || document;
 
+  // Two-pass workflow: only Duration remains a user control. The Quality
+  // (resolution) button group was removed — the first pass is always 480p and
+  // upgrades are driven by the result-card buttons.
   const setActive = (controlName, value) => {
     root.querySelectorAll(`[data-control="${controlName}"] .sd-control-btn`).forEach(btn => {
       btn.classList.toggle('active', btn.dataset.value === String(value));
     });
   };
   setActive('duration', pipelineState.seedanceDuration || '5');
-  setActive('resolution', pipelineState.seedanceResolution || '1080p');
 
-  root.querySelectorAll('.sd-control-buttons').forEach(group => {
-    const controlName = group.dataset.control;
-    group.querySelectorAll('.sd-control-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const value = btn.dataset.value;
-        if (controlName === 'duration') pipelineState.seedanceDuration = value;
-        if (controlName === 'resolution') pipelineState.seedanceResolution = value;
-        setActive(controlName, value);
-        markSceneModified();
-      });
+  root.querySelectorAll('[data-control="duration"] .sd-control-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pipelineState.seedanceDuration = btn.dataset.value;
+      setActive('duration', btn.dataset.value);
+      markSceneModified();
     });
   });
 }
@@ -6884,6 +6897,13 @@ function _regenerateNanobanana() {
 // Same pattern for Seedance.
 function _regenerateSeedance() {
   pipelineState.seedanceResultVideo = null;
+  // Two-pass: reset back to first-pass (preview) state so the next Generate
+  // starts fresh at 480p with a new locked aspect ratio. seedanceSeed is NOT
+  // cleared here (existing behavior — the user may have intentionally locked it).
+  pipelineState.seedancePreviewVideo = null;
+  pipelineState.seedanceFinalResolution = null;
+  pipelineState.seedanceLockedAspectRatio = null;
+  pipelineState.seedanceUsedSeed = null;
 
   const savedPrompt = pipelineState.seedancePrompt || '';
   const savedRef = pipelineState.seedanceReferenceImage;
@@ -6958,6 +6978,19 @@ function _seedanceResultHTML(videoUrl) {
   const usedSeed = pipelineState.seedanceUsedSeed;
   const seedDisplay = (usedSeed !== null && usedSeed !== undefined) ? String(usedSeed) : '—';
   const useDisabled = (usedSeed === null || usedSeed === undefined) ? 'disabled' : '';
+  // Two-pass: resolution badge + upgrade buttons. Only resolutions higher than
+  // the visible result are offered. The upgrade row auto-shows when the visible
+  // result is itself an upgrade (finalRes !== 480p); on a 480p preview it stays
+  // hidden until the user clicks "Use this seed".
+  const finalRes = pipelineState.seedanceFinalResolution || '480p';
+  const RANK = { '480p': 0, '720p': 1, '1080p': 2 };
+  const curRank = RANK[finalRes] !== undefined ? RANK[finalRes] : 0;
+  const upgradeTargets = ['720p', '1080p'].filter(res => RANK[res] > curRank);
+  const upgradeBtns = upgradeTargets.map(res =>
+    `<button class="sd-upgrade-btn" data-target-res="${res}" type="button" style="flex:1;background:var(--bg-surface);border:1px solid var(--accent);border-radius:4px;color:var(--accent-bright);font-size:10px;font-weight:600;padding:6px;cursor:pointer;font-family:var(--font);">↑ Upgrade to ${res}</button>`
+  ).join('');
+  const upgradeRowVisible = (finalRes !== '480p' && upgradeTargets.length > 0);
+  const upgradeRowDisplay = upgradeRowVisible ? 'flex' : 'none';
   return `
     <div class="sd-result-body" style="display:flex;flex-direction:column;width:100%;">
       <div class="sd-result-vid-wrap" style="position:relative;margin:6px 6px 10px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
@@ -6965,9 +6998,12 @@ function _seedanceResultHTML(videoUrl) {
       </div>
       <div class="sd-seed-row" style="display:flex;align-items:center;gap:6px;padding:0 6px 6px;font-size:10px;color:var(--text-secondary);">
         <span>Seed:</span>
-        <span class="sd-used-seed-value" style="font-family:monospace;color:var(--text-primary);">${seedDisplay}</span>
+        <span class="sd-used-seed-value" style="font-family:monospace;color:var(--text-primary);">${seedDisplay} · ${finalRes}</span>
         <button class="sd-use-seed-btn" ${useDisabled} style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Use this seed</button>
         <button class="sd-random-seed-btn" style="background:transparent;border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:9px;color:var(--text-secondary);cursor:pointer;font-family:var(--font);">Random</button>
+      </div>
+      <div class="sd-upgrade-row" style="display:${upgradeRowDisplay};gap:6px;padding:0 6px 6px;">
+        ${upgradeBtns}
       </div>
       <div class="sd-result-actions" style="display:flex;gap:6px;padding:0 6px 6px;">
         <button class="sd-keep-btn" style="flex:1;background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#fff;font-size:11px;font-weight:600;padding:7px;cursor:pointer;font-family:var(--font);">✓ Keep</button>
@@ -6989,12 +7025,44 @@ function _wireSeedanceResultButtons(container, videoUrl, videoPath) {
       pipelineState.seedanceSeed = pipelineState.seedanceUsedSeed;
       showToast(`Seed ${pipelineState.seedanceUsedSeed} locked for next render`);
       markSceneModified();
+      // Two-pass: reveal the upgrade row (only if there are higher resolutions
+      // left — when empty/already-1080p the row has no buttons anyway).
+      container.querySelectorAll('.sd-upgrade-row').forEach(row => {
+        if (row.querySelector('.sd-upgrade-btn')) row.style.display = 'flex';
+      });
     }
   });
   container.querySelector('.sd-random-seed-btn')?.addEventListener('click', () => {
     pipelineState.seedanceSeed = null;
     showToast('Next render will use a random seed');
     markSceneModified();
+    // Seed lock broken — hide upgrade buttons.
+    container.querySelectorAll('.sd-upgrade-row').forEach(row => { row.style.display = 'none'; });
+  });
+  // Two-pass upgrade buttons: lock the visible result's seed, then re-run the
+  // generation at the chosen higher resolution (reuses prompt/inputs/duration
+  // and the locked aspect ratio from pipelineState).
+  container.querySelectorAll('.sd-upgrade-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (seedanceInFlight) return; // an upgrade/preview is already running
+      if (pipelineState.seedanceUsedSeed === null || pipelineState.seedanceUsedSeed === undefined) {
+        showToast('No seed to reuse — run a preview first.');
+        return;
+      }
+      pipelineState.seedanceSeed = pipelineState.seedanceUsedSeed;
+      const targetRes = btn.dataset.targetRes;
+      const card = btn.closest('.step-card, .node-card') || container;
+      // Disable the OTHER upgrade button(s) across both views so a second
+      // upgrade can't start mid-render. Re-enabled in _stopSeedancePoller.
+      document.querySelectorAll('.sd-upgrade-btn').forEach(b => {
+        if (b.dataset.targetRes !== targetRes) { b.disabled = true; b.style.opacity = '0.4'; }
+      });
+      // Retarget the progress bar onto the clicked upgrade button — the form's
+      // Generate button isn't on screen during an upgrade. The selector matches
+      // the same-resolution button in BOTH views (Simple Mode + Node Editor).
+      runSeedanceGenerate(card, targetRes, `.sd-upgrade-btn[data-target-res="${targetRes}"]`);
+    });
   });
   container.querySelector('.sd-keep-btn')?.addEventListener('click', () => {
     pipelineState.seedanceResultVideo = videoPath;
