@@ -542,6 +542,41 @@ ipcMain.handle('copy-file-into-folder', async (_event, { sourcePath, destFolder,
     }
     const folder = (destFolder && fs.existsSync(destFolder)) ? destFolder : os.tmpdir();
     const tag = (prefix || 'UP').toUpperCase();
+    // Preserve the source file's extension (lowercase) so Refluent_NB_001.jpg
+    // and Refluent_SD_001.mp4 both work through the same handler. Counter
+    // sequence is per-prefix; the regex matches that prefix + extension.
+    const srcExt = (path.extname(sourcePath) || '.mp4').toLowerCase().replace(/^\./, '');
+    const reEsc = srcExt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^Refluent_${tag}_(\\d{3})\\.${reEsc}$`, 'i');
+    let max = 0;
+    try {
+      for (const f of fs.readdirSync(folder)) {
+        const m = f.match(re);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+    } catch { /* ignore unreadable folder */ }
+    const filename = `Refluent_${tag}_${String(max + 1).padStart(3, '0')}.${srcExt}`;
+    const destPath = path.join(folder, filename);
+    await fsp.copyFile(sourcePath, destPath);
+    return { success: true, destPath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC Handler: Normalize an external MP4 (or .mov/.webm/.m4v) for the pipeline.
+// Always re-transcodes through the same ffmpeg flags as ffmpeg:convertWebmToMp4
+// — 30fps CFR, libx264, yuv420p — so uploads are guaranteed Seedance-compatible
+// (≤60fps ceiling). Output lands as Refluent_<PREFIX>_NNN.mp4 in the save folder
+// with the same per-prefix counter logic as copy-file-into-folder.
+ipcMain.handle('normalize-mp4-into-folder', async (_event, { sourcePath, destFolder, prefix }) => {
+  try {
+    const os = require('os');
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return { success: false, error: 'Source file not found.' };
+    }
+    const folder = (destFolder && fs.existsSync(destFolder)) ? destFolder : os.tmpdir();
+    const tag = (prefix || 'MP4').toUpperCase();
     const re = new RegExp(`^Refluent_${tag}_(\\d{3})\\.mp4$`, 'i');
     let max = 0;
     try {
@@ -552,10 +587,39 @@ ipcMain.handle('copy-file-into-folder', async (_event, { sourcePath, destFolder,
     } catch { /* ignore unreadable folder */ }
     const filename = `Refluent_${tag}_${String(max + 1).padStart(3, '0')}.mp4`;
     const destPath = path.join(folder, filename);
-    await fsp.copyFile(sourcePath, destPath);
+
+    await new Promise((resolve, reject) => {
+      fluentFfmpeg(sourcePath)
+        .outputOptions([
+          '-y',
+          '-vcodec', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-crf', '18',
+          '-preset', 'slow',
+          '-movflags', '+faststart',
+          // Match convertWebmToMp4: pin to 30fps CFR so uploaded clips never
+          // trip ByteDance Seedance's "frame rate must be <= 60" guard.
+          '-r', '30',
+          '-vsync', 'cfr'
+        ])
+        .save(destPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err));
+    });
+
+    try {
+      const stats = await fsp.stat(destPath);
+      if (stats.size === 0) {
+        try { await fsp.unlink(destPath); } catch {}
+        return { success: false, error: 'FFmpeg produced an empty file. Conversion failed.' };
+      }
+    } catch (e) {
+      return { success: false, error: 'Failed to verify normalized MP4.' };
+    }
+
     return { success: true, destPath };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: (err && err.message) || String(err) };
   }
 });
 

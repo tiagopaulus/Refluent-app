@@ -5409,15 +5409,17 @@ function _wireMp4Thumbnail(scope, mp4Path) {
 function updateStepMediaPreviews() {
   if (pipelineState.mp4Path) {
     const html = _buildMp4ThumbnailHTML(pipelineState.mp4Filename, _toMediaUrl(pipelineState.mp4Path));
-    // Simple Mode card
+    // Simple Mode card — replace whether the body still shows the placeholder
+    // (with the upload-existing-btn) or anything else, but skip if the
+    // thumbnail is already rendered (avoid clobbering an existing player).
     const content = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
-    if (content && !content.querySelector('input, textarea, button')) {
+    if (content && !content.querySelector('video, .mp4-thumb')) {
       content.innerHTML = html;
       _wireMp4Thumbnail(content, pipelineState.mp4Path);
     }
-    // Node Editor node
+    // Node Editor node — same idempotence: only rebuild if no thumbnail yet.
     const nodeBody = document.querySelector('.node-card[data-node="mp4"] .node-body');
-    if (nodeBody) {
+    if (nodeBody && !nodeBody.querySelector('video, .mp4-thumb')) {
       nodeBody.innerHTML = `<div class="node-content">${html}</div>`;
       _wireMp4Thumbnail(nodeBody, pipelineState.mp4Path);
     }
@@ -5427,7 +5429,11 @@ function updateStepMediaPreviews() {
 function _bodyForStep(step) {
   const tplBtn = `<button class="template-picker-btn" data-stage="${step.id}">⚡ Templates</button>`;
   if (step.id === 'mp4') {
-    return '<div class="step-content"><span style="color:#555;font-size:9px;">recording.mp4</span></div>';
+    return `
+      <div class="step-content mp4-body" style="display:flex;flex-direction:column;gap:6px;">
+        <span style="color:#555;font-size:9px;">recording.mp4</span>
+        <button class="upload-existing-btn" data-stage="mp4" type="button" style="font-size:10px;">⬆ Upload existing MP4</button>
+      </div>`;
   }
   if (step.id === 'frame') {
     return `
@@ -5437,7 +5443,7 @@ function _bodyForStep(step) {
           <input type="number" class="pipeline-input" id="frame-input" min="1" step="1" value="1">
           <button id="confirm-frame" class="pipeline-confirm-btn">✓</button>
         </div>
-        <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps · guides Nanobanana camera angle</div>
+        <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps · extracted from MP4. To use a custom still, upload it on Nanobanana.</div>
       </div>`;
   }
   if (step.id === 'nanobanana') {
@@ -5458,6 +5464,11 @@ function _bodyForStep(step) {
         </div>
         <textarea id="nb-prompt" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
         <button id="nb-generate-btn" class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
+        <div style="border-top:1px solid var(--border);margin:8px 6px 6px;"></div>
+        <div style="font-size:10px;color:var(--text-secondary);padding:0 6px 4px;text-align:center;">
+          Skip generation — have the styled still already?
+        </div>
+        <button class="upload-existing-btn" data-stage="nanobanana" type="button">⬆ Upload existing styled image</button>
       </div>`;
   }
   if (step.id === 'seedance') {
@@ -6686,14 +6697,45 @@ function _nodeUpscaleBodyInner() {
     </div>`;
 }
 
+// Shared Nanobanana node-editor body — used by buildNodeEditor's initial build
+// AND by _nodeFormBodyHTML's rebuild path, so a Replace/Regenerate doesn't
+// strip the ref-image slots, upload button, or Generate button. Parity with
+// _nodeSeedanceBodyInner / _nodeUpscaleBodyInner.
+function _nodeNanobananaBodyInner() {
+  return `
+    <div class="node-content nanobanana-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Reference Images</span>
+        <span class="nb-img-hint pipeline-hint">Strong direction ✓</span>
+      </div>
+      <div class="nb-ref-images">
+        <div class="ref-img-slot" data-slot="0">+</div>
+        <div class="ref-img-slot" data-slot="1">+</div>
+        <div class="ref-img-slot" data-slot="2">+</div>
+      </div>
+      <div class="pipeline-label-row">
+        <span class="pipeline-label">Prompt</span>
+        <button class="template-picker-btn" data-stage="nanobanana">⚡ Templates</button>
+      </div>
+      <textarea id="nb-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
+      <button class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
+      <div style="border-top:1px solid var(--border);margin:8px 6px 6px;"></div>
+      <div style="font-size:10px;color:var(--text-secondary);padding:0 6px 4px;text-align:center;">
+        Skip generation — have the styled still already?
+      </div>
+      <button class="upload-existing-btn" data-stage="nanobanana" type="button">⬆ Upload existing styled image</button>
+    </div>`;
+}
+
 function _nodeFormBodyHTML(stage) {
-  // Seedance/Upscale: return the FULL stage body (matches initial build) so a
-  // Replace doesn't lose controls. _nodeCardHTML wraps defaultContent in a
-  // .node-body > .node-content; we mirror that wrapping here for the rebuild
-  // path which assigns this directly into .node-body.
-  if (stage === 'seedance') return `<div class="node-content">${_nodeSeedanceBodyInner()}</div>`;
-  if (stage === 'upscale')  return `<div class="node-content">${_nodeUpscaleBodyInner()}</div>`;
-  // Other stages keep the minimal prompt-only body.
+  // All three pipeline stages return the FULL stage body (matches initial
+  // build) so a Replace/Regenerate doesn't lose controls. _nodeCardHTML wraps
+  // defaultContent in a .node-body > .node-content; we mirror that wrapping
+  // here for the rebuild path which assigns this directly into .node-body.
+  if (stage === 'nanobanana') return `<div class="node-content">${_nodeNanobananaBodyInner()}</div>`;
+  if (stage === 'seedance')   return `<div class="node-content">${_nodeSeedanceBodyInner()}</div>`;
+  if (stage === 'upscale')    return `<div class="node-content">${_nodeUpscaleBodyInner()}</div>`;
+  // Fallback for any future stage without a dedicated body — minimal prompt-only.
   return `<div class="node-content"><div class="node-tpl-body">
       <textarea id="${_NODE_PROMPT_IDS[stage]}" class="node-prompt" rows="2" placeholder="${_NODE_PROMPT_PH[stage]}"></textarea>
       <button class="template-picker-btn" data-stage="${stage}">⚡ Templates</button>
@@ -6777,6 +6819,36 @@ function _wireUpscaleNodeCard(upNode) {
     });
   }
 }
+
+// Shared Nanobanana node-editor wiring — mirrors _wireSeedanceNodeCard /
+// _wireUpscaleNodeCard. Used by buildNodeEditor's initial build AND the
+// rebuild path so a Replace/Regenerate rewires every control (template,
+// ref-image slots, generate, prompt sync) identically to the first render.
+function _wireNanobananaNodeCard(nbNode) {
+  if (!nbNode) return;
+  nbNode.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTemplatePicker('nanobanana', 'nb-prompt-node');
+  });
+  wireRefImageSlots(nbNode);
+  nbNode.querySelector('.nb-generate-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    runNanobananaGenerate(nbNode);
+  });
+  const ta = nbNode.querySelector('#nb-prompt-node');
+  if (ta) {
+    if (pipelineState.nanobananaPrompt) ta.value = pipelineState.nanobananaPrompt;
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    ta.addEventListener('mousedown', (e) => e.stopPropagation());
+    ta.addEventListener('input', () => {
+      pipelineState.nanobananaPrompt = ta.value;
+      const other = document.getElementById('nb-prompt');
+      if (other && other.value !== ta.value) other.value = ta.value;
+      markSceneModified();
+    });
+  }
+}
+
 function _wireNodeFormBody(stage, nodeEl) {
   if (!nodeEl) return;
   const tpl = nodeEl.querySelector('.template-picker-btn');
@@ -6812,15 +6884,24 @@ function rebuildNanobananaCardBody() {
       wireStepCardInteractions(nbCard, stepDef);
     }
   }
-  // Also rebuild Node Editor node body
+  // Also rebuild Node Editor node body — full markup + full wiring so the
+  // rebuilt node matches the initial build (ref slots, template, generate,
+  // prompt sync, upload). Mirror of rebuildSeedanceCardBody.
   const nbNode = document.querySelector('.node-card[data-node="nanobanana"]');
   if (nbNode) {
     const nbNodeBody = nbNode.querySelector('.node-body');
     if (nbNodeBody) {
       nbNodeBody.innerHTML = _nodeFormBodyHTML('nanobanana');
-      _wireNodeFormBody('nanobanana', nbNode);
+      _wireNanobananaNodeCard(nbNode);
     }
   }
+  // Re-wire the upload button + ref-image slots in BOTH views. Mirror of the
+  // wireSeedanceControls + wireUploadExistingButtons calls at the end of
+  // rebuildSeedanceCardBody / rebuildUpscaleCardBody. wireRefImageSlots also
+  // repopulates the slot contents from pipelineState.nanobananaReferenceImages
+  // (via refreshRefImageSlots) so a Replace/Regenerate restores them.
+  wireRefImageSlots(document);
+  wireUploadExistingButtons(document);
 }
 
 // Mission Seedance Phase 2 (v3.0): wire the duration/resolution toggle groups
@@ -6897,6 +6978,60 @@ function applyUploadedUpscale(videoPath) {
   markSceneModified();
 }
 
+function applyUploadedNanobanana(imagePath) {
+  pipelineState.nanobananaResultImage = imagePath;
+  pipelineState.nanobananaVersion = (pipelineState.nanobananaVersion || 0) + 1;
+  pipelineState.nanobananaSourceFrameVersion = pipelineState.frameVersion || 0;
+  showNanobananaResult(_toMediaUrl(imagePath), imagePath);
+  refreshStaleChips();
+  markSceneModified();
+}
+
+function applyUploadedMp4(videoPath) {
+  pipelineState.mp4Path = videoPath;
+  // path.basename is available via Node's path module exposed in renderer via
+  // the preload bridge — fall back to string slicing if absent.
+  pipelineState.mp4Filename = (window.electronAPI && typeof window.electronAPI.pathBasename === 'function')
+    ? window.electronAPI.pathBasename(videoPath)
+    : String(videoPath).split(/[\\/]/).pop();
+  pipelineState.mp4Version = (pipelineState.mp4Version || 0) + 1;
+  if (typeof updateStepMediaPreviews === 'function') updateStepMediaPreviews();
+  refreshStaleChips();
+  markSceneModified();
+}
+
+// Stage upload configs — keyed by data-stage. Each entry describes the file
+// filter, the IPC to invoke (plain copy vs. transcoded normalize), the
+// destination filename prefix, and the apply function that owns post-import
+// state. Adding a new stage is a single map entry.
+const _UPLOAD_STAGE_CONFIG = {
+  mp4: {
+    filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'webm', 'm4v'] }],
+    ipc: 'normalizeMp4IntoFolder',
+    prefix: 'MP4',
+    apply: (p) => applyUploadedMp4(p),
+    progressMsg: 'Normalizing MP4…'
+  },
+  nanobanana: {
+    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+    ipc: 'copyFileIntoFolder',
+    prefix: 'NB',
+    apply: (p) => applyUploadedNanobanana(p)
+  },
+  seedance: {
+    filters: [{ name: 'Video', extensions: ['mp4'] }],
+    ipc: 'copyFileIntoFolder',
+    prefix: 'SD',
+    apply: (p) => applyUploadedSeedance(p)
+  },
+  upscale: {
+    filters: [{ name: 'Video', extensions: ['mp4'] }],
+    ipc: 'copyFileIntoFolder',
+    prefix: 'UP',
+    apply: (p) => applyUploadedUpscale(p)
+  }
+};
+
 function wireUploadExistingButtons(scope) {
   const root = scope || document;
   root.querySelectorAll('.upload-existing-btn').forEach(btn => {
@@ -6905,21 +7040,38 @@ function wireUploadExistingButtons(scope) {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const stage = btn.dataset.stage;
-      const sourcePath = await window.electronAPI.openFileDialog({
-        filters: [{ name: 'Video', extensions: ['mp4'] }]
-      });
+      const cfg = _UPLOAD_STAGE_CONFIG[stage];
+      if (!cfg) return;
+      const sourcePath = await window.electronAPI.openFileDialog({ filters: cfg.filters });
       if (!sourcePath) return;
-      const res = await window.electronAPI.copyFileIntoFolder({
-        sourcePath,
-        destFolder: localStorage.getItem('refluent_mp4_folder') || null,
-        prefix: stage === 'seedance' ? 'SD' : 'UP'
-      });
+      // Disable the button + show transient progress label during the IPC so
+      // long-running transcodes (MP4 normalize, 1-3s typical) don't look hung.
+      const origLabel = btn.textContent;
+      btn.disabled = true;
+      if (cfg.progressMsg) btn.textContent = cfg.progressMsg;
+      let res;
+      try {
+        const ipcFn = window.electronAPI[cfg.ipc];
+        if (typeof ipcFn !== 'function') {
+          res = { success: false, error: `IPC '${cfg.ipc}' unavailable.` };
+        } else {
+          res = await ipcFn({
+            sourcePath,
+            destFolder: localStorage.getItem('refluent_mp4_folder') || null,
+            prefix: cfg.prefix
+          });
+        }
+      } catch (err) {
+        res = { success: false, error: err && err.message };
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }
       if (!res || !res.success) {
         showToast((res && res.error) || 'Could not import the file. Please try again.');
         return;
       }
-      if (stage === 'seedance') applyUploadedSeedance(res.destPath);
-      else if (stage === 'upscale') applyUploadedUpscale(res.destPath);
+      cfg.apply(res.destPath);
     });
   });
 }
@@ -8100,35 +8252,17 @@ function buildNodeEditor() {
         <input type="number" id="frame-input-node" class="pipeline-input" min="1" step="1" value="1">
         <button id="confirm-frame-node" class="pipeline-confirm-btn">✓</button>
       </div>
-      <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps</div>
+      <div class="pipeline-hint-block">Frame 1 = first frame · 30 fps · extracted from MP4. To use a custom still, upload it on Nanobanana.</div>
     </div>`;
 
-  const nodeNanobananaBody = `
-    <div class="node-content nanobanana-body" style="display:flex;flex-direction:column;gap:6px;padding:8px;">
-      <div class="pipeline-label-row">
-        <span class="pipeline-label">Reference Images</span>
-        <span class="nb-img-hint pipeline-hint">Strong direction ✓</span>
-      </div>
-      <div class="nb-ref-images">
-        <div class="ref-img-slot" data-slot="0">+</div>
-        <div class="ref-img-slot" data-slot="1">+</div>
-        <div class="ref-img-slot" data-slot="2">+</div>
-      </div>
-      <div class="pipeline-label-row">
-        <span class="pipeline-label">Prompt</span>
-        <button class="template-picker-btn" data-stage="nanobanana">⚡ Templates</button>
-      </div>
-      <textarea id="nb-prompt-node" class="pipeline-prompt" rows="2" placeholder="Describe camera angle, lighting and style..."></textarea>
-      <button class="pipeline-generate-btn nb-generate-btn">Generate Image →</button>
-    </div>`;
-
-  // Seedance/Upscale node bodies come from the shared markup helpers so the
-  // initial build and the Replace-rebuild path are guaranteed identical.
+  // Nanobanana/Seedance/Upscale node bodies all come from shared markup helpers
+  // so the initial build and the Replace-rebuild path are guaranteed identical.
+  const nodeNanobananaBody = _nodeNanobananaBodyInner();
   const nodeSeedanceBody = _nodeSeedanceBodyInner();
   const nodeUpscaleBody = _nodeUpscaleBodyInner();
 
   nodePanelEl.innerHTML =
-    _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<span style="font-size:9px;color:#555;">Waiting for recording…</span>') +
+    _nodeCardHTML('mp4',        'MP4 Output',       'Step 1', false, true,  '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;align-items:flex-start;"><span style="font-size:9px;color:#555;">Waiting for recording…</span><button class="upload-existing-btn" data-stage="mp4" type="button" style="font-size:10px;">⬆ Upload existing MP4</button></div>') +
     _nodeCardHTML('frame',      'Reference Frame',  'Step 2', true,  true,  nodeFrameBody) +
     _nodeCardHTML('nanobanana', 'Nanobanana',       'Step 3', true,  true,  nodeNanobananaBody) +
     _nodeCardHTML('seedance',   'Seedance',         'Step 4', true,  true,  nodeSeedanceBody) +
@@ -8140,22 +8274,10 @@ function buildNodeEditor() {
   const upNodeCard = document.querySelector('.node-card[data-node="upscale"]');
   const frameNodeCard = document.querySelector('.node-card[data-node="frame"]');
 
-  nbNodeCard?.querySelector('.template-picker-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showTemplatePicker('nanobanana', 'nb-prompt-node');
-  });
-
-  // Wire ref image slots inside the nanobanana node (uses shared scope-aware function)
-  if (nbNodeCard) wireRefImageSlots(nbNodeCard);
-
-  // Wire Nanobanana Generate button
-  nbNodeCard?.querySelector('.nb-generate-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    runNanobananaGenerate(nbNodeCard);
-  });
-
-  // Seedance/Upscale node cards: full wiring via the shared helpers (template,
-  // generate, override, prompt sync) so it matches the Replace-rebuild path.
+  // Nanobanana/Seedance/Upscale node cards: full wiring via the shared helpers
+  // (template, ref slots, generate, prompt sync) so initial build matches the
+  // Replace/Regenerate rebuild path exactly.
+  _wireNanobananaNodeCard(nbNodeCard);
   _wireSeedanceNodeCard(sdNodeCard);
   _wireUpscaleNodeCard(upNodeCard);
   // Scale-factor / duration / quality buttons are wired by wireUpscaleControls
