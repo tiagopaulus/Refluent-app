@@ -464,188 +464,6 @@ function logRendererMemory(tag = '') {
 // Type `logRendererMemory()` or `logRendererMemory('mylabel')` in the console.
 window.logRendererMemory = logRendererMemory;
 
-// On-screen memory diagnostics overlay — for environments (e.g. Parsec) where
-// DevTools is unreachable. Self-contained: builds a fixed-position toggle
-// button + a slide-out panel with live counts, named snapshots, and a clear-log
-// action. Inline styles only; no style.css touch. Built once at startup; defers
-// itself via setTimeout if the renderer isn't ready yet.
-function initMemoryDiagnostics() {
-  if (typeof renderer === 'undefined' || !renderer || !document.body) {
-    setTimeout(initMemoryDiagnostics, 100);
-    return;
-  }
-
-  let panelVisible = false;
-  let refreshTimer = null;
-  const snapshots = []; // { ts, label, main:{g,t,p}, gizmo:{g,t,p}|null }
-  const MAX_SNAPSHOTS = 50;
-
-  // Toggle button — fixed, top-right (just under the layout-toggle row).
-  const btn = document.createElement('button');
-  btn.id = 'memory-diag-btn';
-  btn.textContent = 'Memory';
-  btn.title = 'Toggle memory diagnostics overlay (Ctrl+Alt+M)';
-  btn.style.cssText = 'position:fixed;top:48px;right:16px;z-index:99998;' +
-    'background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#ccc;' +
-    'font-family:monospace;font-size:11px;padding:4px 10px;cursor:pointer;';
-  document.body.appendChild(btn);
-
-  // Overlay panel — bottom-right, sits above the 80×80 axis gizmo.
-  const panel = document.createElement('div');
-  panel.id = 'memory-diag-panel';
-  panel.style.cssText = 'position:fixed;bottom:100px;right:12px;width:280px;' +
-    'background:rgba(0,0,0,0.85);border:1px solid #444;border-radius:6px;' +
-    'color:#fff;font-family:monospace;font-size:11px;padding:10px;' +
-    'z-index:99999;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  panel.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <span style="font-weight:600;">Memory Diagnostics</span>
-      <button id="memdiag-close" style="background:transparent;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
-    </div>
-    <div style="border-top:1px solid #444;padding-top:6px;">
-      <div style="color:#9ca3af;margin-bottom:2px;">Main renderer:</div>
-      <div id="memdiag-main" style="padding-left:8px;white-space:pre;">geometries: -
-textures:   -
-programs:   -</div>
-      <div style="color:#9ca3af;margin:6px 0 2px;">Gizmo renderer:</div>
-      <div id="memdiag-gizmo" style="padding-left:8px;white-space:pre;">geometries: -
-textures:   -</div>
-    </div>
-    <div style="border-top:1px solid #444;margin-top:8px;padding-top:6px;">
-      <div style="display:flex;gap:4px;margin-bottom:4px;">
-        <input id="memdiag-label" type="text" placeholder="Label (optional)..." style="flex:1;background:#1a1a1a;border:1px solid #444;border-radius:3px;color:#fff;font-family:monospace;font-size:10px;padding:4px 6px;outline:none;">
-        <button id="memdiag-snap" style="background:#2a4a8a;border:1px solid #3a5a9a;border-radius:3px;color:#fff;font-family:monospace;font-size:10px;padding:4px 10px;cursor:pointer;">Snap</button>
-      </div>
-      <div style="display:flex;gap:4px;">
-        <button id="memdiag-clear" style="flex:1;background:#3a3a3a;border:1px solid #555;border-radius:3px;color:#ccc;font-family:monospace;font-size:10px;padding:4px;cursor:pointer;">Clear log</button>
-        <button id="memdiag-copy" style="flex:1;background:#3a3a3a;border:1px solid #555;border-radius:3px;color:#ccc;font-family:monospace;font-size:10px;padding:4px;cursor:pointer;">Copy log</button>
-      </div>
-    </div>
-    <div style="color:#9ca3af;margin:8px 0 2px;">Snapshots:</div>
-    <div id="memdiag-list" style="max-height:160px;overflow-y:auto;font-size:10px;line-height:1.4;color:#ddd;"></div>
-  `;
-  document.body.appendChild(panel);
-
-  const $ = id => panel.querySelector('#' + id);
-
-  const readCounts = () => {
-    const main = {
-      g: renderer?.info?.memory?.geometries ?? 0,
-      t: renderer?.info?.memory?.textures ?? 0,
-      p: renderer?.info?.programs?.length ?? 0
-    };
-    const gz = (typeof gizmoRenderer !== 'undefined' && gizmoRenderer) ? {
-      g: gizmoRenderer.info?.memory?.geometries ?? 0,
-      t: gizmoRenderer.info?.memory?.textures ?? 0,
-      p: gizmoRenderer.info?.programs?.length ?? 0
-    } : null;
-    return { main, gizmo: gz };
-  };
-
-  const refresh = () => {
-    const c = readCounts();
-    $('memdiag-main').textContent =
-      `geometries: ${c.main.g}\ntextures:   ${c.main.t}\nprograms:   ${c.main.p}`;
-    $('memdiag-gizmo').textContent = c.gizmo
-      ? `geometries: ${c.gizmo.g}\ntextures:   ${c.gizmo.t}`
-      : '(not available)';
-  };
-
-  const renderList = () => {
-    const list = $('memdiag-list');
-    if (snapshots.length === 0) {
-      list.innerHTML = '<span style="color:#666;font-style:italic;">(none yet — click Snapshot)</span>';
-      return;
-    }
-    // Newest first; auto-truncate long labels in display only.
-    list.innerHTML = snapshots.slice().reverse().map(s => {
-      const gz = s.gizmo ? ` | gz g=${s.gizmo.g} t=${s.gizmo.t}` : '';
-      return `<div>${s.ts}  ${s.label}  g=${s.main.g} t=${s.main.t} p=${s.main.p}${gz}</div>`;
-    }).join('');
-  };
-
-  const snapshot = (label) => {
-    const c = readCounts();
-    const ts = new Date().toTimeString().slice(0, 8); // HH:MM:SS
-    snapshots.push({ ts, label: label || `snapshot ${snapshots.length + 1}`, main: c.main, gizmo: c.gizmo });
-    if (snapshots.length > MAX_SNAPSHOTS) snapshots.shift();
-    renderList();
-  };
-
-  const show = () => {
-    panel.style.display = 'block';
-    panelVisible = true;
-    refresh();
-    refreshTimer = setInterval(refresh, 1000);
-  };
-  const hide = () => {
-    panel.style.display = 'none';
-    panelVisible = false;
-    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-  };
-
-  btn.addEventListener('click', () => { panelVisible ? hide() : show(); });
-  $('memdiag-close').addEventListener('click', hide);
-
-  // Inline-input snapshot flow (window.prompt is a no-op in Electron's
-  // renderer since v6 — silently returns null with no UI). The text input
-  // sits beside the Snap button; empty value falls back to an auto-numbered
-  // label. Enter in the input is equivalent to clicking Snap.
-  const labelInput = $('memdiag-label');
-  const takeSnapshot = () => {
-    const def = `snapshot ${snapshots.length + 1}`;
-    const raw = (labelInput.value || '').trim();
-    snapshot(raw || def);
-    labelInput.value = '';
-    labelInput.focus();
-  };
-  $('memdiag-snap').addEventListener('click', takeSnapshot);
-  labelInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); takeSnapshot(); }
-  });
-
-  $('memdiag-clear').addEventListener('click', () => {
-    snapshots.length = 0;
-    renderList();
-  });
-
-  // Copy log — serialize all snapshots to plain text and write to clipboard.
-  // Useful in Parsec / no-DevTools sessions: paste straight into chat.
-  $('memdiag-copy').addEventListener('click', async () => {
-    if (snapshots.length === 0) {
-      if (typeof showToast === 'function') showToast('No snapshots to copy.');
-      return;
-    }
-    const lines = [`# Refluent memory diagnostics — ${snapshots.length} snapshot(s)`];
-    snapshots.forEach(s => {
-      const gz = s.gizmo ? ` | gz g=${s.gizmo.g} t=${s.gizmo.t}` : '';
-      lines.push(`${s.ts}  ${s.label}  g=${s.main.g} t=${s.main.t} p=${s.main.p}${gz}`);
-    });
-    const text = lines.join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      if (typeof showToast === 'function') showToast(`Copied ${snapshots.length} snapshot(s).`);
-    } catch (err) {
-      // Fallback: stash on a temp textarea + execCommand('copy')
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        if (typeof showToast === 'function') showToast(`Copied ${snapshots.length} snapshot(s).`);
-      } catch (err2) {
-        if (typeof showToast === 'function') showToast('Could not copy to clipboard.');
-      }
-    }
-  });
-
-  renderList();
-}
-initMemoryDiagnostics();
-
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
@@ -1038,7 +856,7 @@ function showTargetPopup() {
       slider.addEventListener('input', () => {
         controls.target[axis] = (targetSliderBase[axis] || 0) + parseFloat(slider.value) * 0.3;
         controls.update();
-        markSceneModified();
+        _markDirtyDebounced();
       });
     });
   }
@@ -1523,7 +1341,7 @@ objectPopup.querySelectorAll('[data-type="position"]').forEach(slider => {
     const base = sliderBaseValues[slider.dataset.axis] || 0;
     selectedObject.position[slider.dataset.axis] = base + parseFloat(slider.value) * 0.3;
     updateTransformUI();
-    markSceneModified();
+    _markDirtyDebounced();
   });
 });
 
@@ -1569,7 +1387,7 @@ objectPopup.querySelectorAll('[data-type="scale"]').forEach(slider => {
       selectedObject.scale[axis] = Math.max(0.001, base + delta);
     }
     updateTransformUI();
-    markSceneModified();
+    _markDirtyDebounced();
   });
 });
 
@@ -1590,7 +1408,7 @@ objectPopup.querySelectorAll('[data-type="rotation"]').forEach(slider => {
     const deltaRad = parseFloat(slider.value) * (Math.PI / 180);
     selectedObject.rotation[axis] = base + deltaRad;
     _updateRotateStatusFromObject();
-    markSceneModified();
+    _markDirtyDebounced();
   });
 });
 
@@ -1961,6 +1779,7 @@ renderer.domElement.addEventListener('wheel', (e) => {
       newScale = Math.max(0.1, Math.min(10, newScale));
       selectedObject.scale.set(newScale, newScale, newScale);
       updateTransformUI();
+      _markDirtyDebounced();
       handled = true;
     } else if (isGKeyDown) {
       e.preventDefault();
@@ -1970,6 +1789,7 @@ renderer.domElement.addEventListener('wheel', (e) => {
       newY = Math.max(-20, Math.min(20, newY));
       selectedObject.position.y = newY;
       updateTransformUI();
+      _markDirtyDebounced();
       handled = true;
     }
   }
@@ -1985,7 +1805,7 @@ renderer.domElement.addEventListener('wheel', (e) => {
       controls.target.y = newY;
       targetGlyph.position.y = newY;
       controls.update();
-      markSceneModified();
+      _markDirtyDebounced();
     }
   }
 }, { passive: false });
@@ -2624,6 +2444,7 @@ recordBtn.addEventListener('click', async () => {
       const _s1c = document.querySelector('.step-card[data-step-key="mp4"] .step-content');
       if (_s1c) _s1c.innerHTML = `<div style="font-size:9px;color:#aaa;padding:4px;word-break:break-all;">${pipelineState.mp4Filename}</div>`;
       refreshStaleChips();
+      markSceneModified();
       activateStep('frame');
     } else {
       if (result.message !== 'Canceled by user') {
@@ -2727,6 +2548,9 @@ const camSpeedVal = document.getElementById('cam-speed-val');
 const camDurSlider = document.getElementById('cam-duration');
 const camDurVal = document.getElementById('cam-duration-val');
 const camLockTarget = document.getElementById('cam-lock-target');
+// Lock-to-target had no change listener wired at all — saved state loaded from
+// .ent but live toggles were not propagated to the dirty flag.
+if (camLockTarget) camLockTarget.addEventListener('change', () => markSceneModified());
 
 const camPlayBtn = document.getElementById('cam-play-btn');
 const camLoopBtn = document.getElementById('cam-loop-btn');
@@ -2761,9 +2585,12 @@ recWithMoveBtn.addEventListener('click', () => {
 camSpeedSlider.addEventListener('input', (e) => {
   camSpeedVal.innerText = parseFloat(e.target.value).toFixed(1);
 });
+// Dirty-mark on release ('change') instead of 'input' — fires once per drag.
+camSpeedSlider.addEventListener('change', () => markSceneModified());
 camDurSlider.addEventListener('input', (e) => {
   camDurVal.innerText = e.target.value;
 });
+camDurSlider.addEventListener('change', () => markSceneModified());
 
 let currentCamType = 'pushIn';
 camRadios.forEach(r => {
@@ -2859,6 +2686,7 @@ camLoopBtn.addEventListener('click', () => {
   animIsLoop = !animIsLoop;
   if (animIsLoop) camLoopBtn.classList.add('active');
   else camLoopBtn.classList.remove('active');
+  markSceneModified();
   
   if (camAnimState === 'playing' && animIsLoop) {
     camAnimState = 'looping';
@@ -3818,6 +3646,23 @@ function markSceneModified() {
   updateWindowTitle();
 }
 
+// Trailing debounce — fires `fn` once after `ms` of silence. Used to collapse
+// high-frequency dirty-marks (OrbitControls 'change' / wheel gestures / slider
+// 'input') into a single mark per gesture, so the IPC chain and title-bar
+// reflow don't run at frame rate.
+function _debounce(fn, ms) {
+  let t = null;
+  return function(...args) {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+
+// 500ms is a sweet spot: long enough that an OrbitControls drag + its damping
+// settle resolves to one mark; short enough that the dot indicator updates
+// before the user looks for it after a small adjustment.
+const _markDirtyDebounced = _debounce(markSceneModified, 500);
+
 async function checkUnsavedBeforeAction(actionName) {
   if (!hasUnsavedChanges) return true;
   const sceneName = currentSceneName || 'Untitled';
@@ -3893,8 +3738,10 @@ function setupAutosave() {
 }
 setupAutosave();
 
-// Camera moves count as scene modifications
-controls.addEventListener('change', markSceneModified);
+// Camera moves count as scene modifications. Debounced 500ms — OrbitControls
+// 'change' fires per rAF during drag + damping (~60Hz); without debouncing
+// every gesture writes hundreds of IPCs to the main process.
+controls.addEventListener('change', _markDirtyDebounced);
 
 // Reposition target popup + marker on camera moves — debounced to settle after 50ms
 let _popupMoveTimer = null;
@@ -4406,7 +4253,12 @@ async function _loadModelFromBase64(base64, format) {
   });
 }
 
-async function loadScene(filePath) {
+async function loadScene(filePath, opts = {}) {
+  // Self-check the unsaved-changes prompt so every caller (File menu, Ctrl+O,
+  // Recent Projects card click, drag-drop, open-from-path IPC) is covered.
+  // The `skipUnsavedCheck` opt is for callers that already prompted upstream
+  // (e.g. openSceneFromDialog, which gates BEFORE opening the file dialog).
+  if (!opts.skipUnsavedCheck && !(await checkUnsavedBeforeAction('open another scene'))) return;
   let json;
   try { json = await window.electronAPI.readFile(filePath); }
   catch (err) { showToast('Open failed: ' + err.message); return; }
@@ -4704,19 +4556,31 @@ async function loadScene(filePath) {
 }
 
 async function newScene() {
+  // Self-check the unsaved-changes prompt at the entry point so every caller
+  // (File menu, Ctrl+N, Recent Projects "+ New Scene") gets the dialog without
+  // having to remember to wrap their call. Aborts if user picks Cancel — or if
+  // they pick Save and then Cancel the file-save dialog.
+  if (!(await checkUnsavedBeforeAction('create a new scene'))) return;
   _clearSceneSilently();
   currentScenePath = null;
   currentSceneName = null;
   hasUnsavedChanges = false;
   window.electronAPI.setUnsavedChanges(false);
   updateWindowTitle();
+  // New Scene always starts in Simple Mode per design intent. (loadScene's
+  // `if (l.mode) setLayout(l.mode)` is untouched — opening a saved scene
+  // still restores whatever layout was saved with that file.)
+  setLayout('simple');
   // Wipe pipeline state + rebuild both panels from clean templates
   if (typeof resetPipeline === 'function') resetPipeline();
 }
 
 async function openSceneFromDialog() {
+  // Self-check via loadScene below — but we also gate the OS file dialog so
+  // the user isn't asked to pick a file just to be told they have unsaved work.
+  if (!(await checkUnsavedBeforeAction('open another scene'))) return;
   const path = await window.electronAPI.openSceneDialog();
-  if (path) await loadScene(path);
+  if (path) await loadScene(path, { skipUnsavedCheck: true });
 }
 
 function showRecentProjects() {
@@ -4781,18 +4645,24 @@ function showRecentProjects() {
     });
   });
 
-  document.getElementById('new-scene-btn').addEventListener('click', () => overlay.remove());
+  document.getElementById('new-scene-btn').addEventListener('click', () => {
+    // Route through newScene() so all 3 entry points (File menu, Ctrl+N, this
+    // overlay button) share the same code path — including setLayout('simple').
+    // Idempotent at startup (scene is already empty, pipelineState at defaults);
+    // the only observable effect is forcing Simple Mode even when the saved
+    // layout from a prior session was Node Editor.
+    overlay.remove();
+    newScene();
+  });
   document.getElementById('open-scene-btn').addEventListener('click', async () => {
     overlay.remove();
     await openSceneFromDialog();
   });
 }
 
-window.electronAPI.onNewScene(async () => {
-  const proceed = await checkUnsavedBeforeAction('create a new scene');
-  if (!proceed) return;
-  newScene();
-});
+// newScene() self-checks unsaved changes at its entry point, so the IPC
+// handler can call it directly without wrapping. Same applies to all callers.
+window.electronAPI.onNewScene(() => { newScene(); });
 window.electronAPI.onOpenScene(() => openSceneFromDialog());
 window.electronAPI.onSaveScene(() => saveScene(false));
 window.electronAPI.onSaveSceneAs(() => saveScene(true));
@@ -5012,9 +4882,17 @@ function setLayout(mode) {
     if (btnSimple) { btnSimple.style.borderColor = '#444'; btnSimple.style.opacity = '0.6'; }
   }
 
+  // Mark the scene as modified only if the layout actually changed (compare to
+  // previous persisted value). Prevents spurious dirty marks when setLayout is
+  // called with the current mode — e.g. startup restore, newScene('simple')
+  // when already in Simple Mode.
+  const previousMode = localStorage.getItem('refluent_layout_mode');
   localStorage.setItem('refluent_layout_mode', mode);
   // keep legacy key in sync so .ent saves and the Preferences dropdown still resolve
   localStorage.setItem('layout_mode', mode);
+  if (previousMode && previousMode !== mode && typeof markSceneModified === 'function') {
+    markSceneModified();
+  }
 
   // Defer post-switch work until flex layout has settled
   requestAnimationFrame(() => {
