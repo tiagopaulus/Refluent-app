@@ -410,6 +410,242 @@ try {
   debug('ERROR appending canvas: ' + e.message);
 }
 
+// ---- Three.js GPU resource lifecycle helpers ----
+// scene.remove(obj) does NOT free WebGL vertex buffers, shader programs, or
+// texture memory — Three.js requires explicit .dispose() calls. This helper
+// traverses a removed subtree and disposes every geometry/material/texture it
+// finds, including PBR maps (any property whose value is a THREE.Texture). The
+// loop-over-properties pattern future-proofs against new map types (clearcoat,
+// transmission, sheen, etc.) without hard-coding the list. .dispose() is
+// idempotent in modern Three.js, so shared internals within one imported model
+// can be safely traversed without bookkeeping.
+//
+// SAFETY: call this only on objects whose `userData.isUserObject === true`
+// (Add Box/Sphere primitives and imported models). NEVER call on permanent
+// scene infrastructure (gridHelper, lights, targetGlyph, gizmoScene contents).
+function _disposeObject3D(obj) {
+  if (!obj) return;
+  obj.traverse(child => {
+    if (child.isMesh || child.isLine || child.isPoints || child.isSprite) {
+      if (child.geometry) child.geometry.dispose();
+      const mats = Array.isArray(child.material) ? child.material : (child.material ? [child.material] : []);
+      mats.forEach(m => {
+        for (const key in m) {
+          const v = m[key];
+          if (v && v.isTexture) v.dispose();
+        }
+        m.dispose();
+      });
+    }
+  });
+}
+
+// Debug helper — dumps renderer.info to the console for both the main viewport
+// renderer and the axis-gizmo renderer. Wire to Ctrl+Shift+M in the global
+// keydown handler. Use the tag arg to label hot-path callsites during debugging
+// (e.g. logRendererMemory('after-clear')) — geometries/textures/programs should
+// return to the pre-action baseline after each delete/clear/new-scene cycle.
+function logRendererMemory(tag = '') {
+  const stamp = new Date().toISOString();
+  const dump = (name, r) => {
+    if (!r || !r.info) return;
+    const m = r.info.memory, ren = r.info.render, p = r.info.programs || [];
+    console.log(
+      `[${stamp}] ${tag ? tag + ' ' : ''}${name}: ` +
+      `geometries=${m.geometries}  textures=${m.textures}  programs=${p.length}  ` +
+      `calls=${ren.calls}  triangles=${ren.triangles}`
+    );
+  };
+  dump('main', renderer);
+  if (typeof gizmoRenderer !== 'undefined' && gizmoRenderer) dump('gizmo', gizmoRenderer);
+}
+// Expose on window so the user can invoke from DevTools console at any time
+// (useful when the chosen keyboard shortcut is grabbed by remote-access tools).
+// Type `logRendererMemory()` or `logRendererMemory('mylabel')` in the console.
+window.logRendererMemory = logRendererMemory;
+
+// On-screen memory diagnostics overlay — for environments (e.g. Parsec) where
+// DevTools is unreachable. Self-contained: builds a fixed-position toggle
+// button + a slide-out panel with live counts, named snapshots, and a clear-log
+// action. Inline styles only; no style.css touch. Built once at startup; defers
+// itself via setTimeout if the renderer isn't ready yet.
+function initMemoryDiagnostics() {
+  if (typeof renderer === 'undefined' || !renderer || !document.body) {
+    setTimeout(initMemoryDiagnostics, 100);
+    return;
+  }
+
+  let panelVisible = false;
+  let refreshTimer = null;
+  const snapshots = []; // { ts, label, main:{g,t,p}, gizmo:{g,t,p}|null }
+  const MAX_SNAPSHOTS = 50;
+
+  // Toggle button — fixed, top-right (just under the layout-toggle row).
+  const btn = document.createElement('button');
+  btn.id = 'memory-diag-btn';
+  btn.textContent = 'Memory';
+  btn.title = 'Toggle memory diagnostics overlay (Ctrl+Alt+M)';
+  btn.style.cssText = 'position:fixed;top:48px;right:16px;z-index:99998;' +
+    'background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#ccc;' +
+    'font-family:monospace;font-size:11px;padding:4px 10px;cursor:pointer;';
+  document.body.appendChild(btn);
+
+  // Overlay panel — bottom-right, sits above the 80×80 axis gizmo.
+  const panel = document.createElement('div');
+  panel.id = 'memory-diag-panel';
+  panel.style.cssText = 'position:fixed;bottom:100px;right:12px;width:280px;' +
+    'background:rgba(0,0,0,0.85);border:1px solid #444;border-radius:6px;' +
+    'color:#fff;font-family:monospace;font-size:11px;padding:10px;' +
+    'z-index:99999;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-weight:600;">Memory Diagnostics</span>
+      <button id="memdiag-close" style="background:transparent;border:none;color:#fff;font-size:16px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
+    </div>
+    <div style="border-top:1px solid #444;padding-top:6px;">
+      <div style="color:#9ca3af;margin-bottom:2px;">Main renderer:</div>
+      <div id="memdiag-main" style="padding-left:8px;white-space:pre;">geometries: -
+textures:   -
+programs:   -</div>
+      <div style="color:#9ca3af;margin:6px 0 2px;">Gizmo renderer:</div>
+      <div id="memdiag-gizmo" style="padding-left:8px;white-space:pre;">geometries: -
+textures:   -</div>
+    </div>
+    <div style="border-top:1px solid #444;margin-top:8px;padding-top:6px;">
+      <div style="display:flex;gap:4px;margin-bottom:4px;">
+        <input id="memdiag-label" type="text" placeholder="Label (optional)..." style="flex:1;background:#1a1a1a;border:1px solid #444;border-radius:3px;color:#fff;font-family:monospace;font-size:10px;padding:4px 6px;outline:none;">
+        <button id="memdiag-snap" style="background:#2a4a8a;border:1px solid #3a5a9a;border-radius:3px;color:#fff;font-family:monospace;font-size:10px;padding:4px 10px;cursor:pointer;">Snap</button>
+      </div>
+      <div style="display:flex;gap:4px;">
+        <button id="memdiag-clear" style="flex:1;background:#3a3a3a;border:1px solid #555;border-radius:3px;color:#ccc;font-family:monospace;font-size:10px;padding:4px;cursor:pointer;">Clear log</button>
+        <button id="memdiag-copy" style="flex:1;background:#3a3a3a;border:1px solid #555;border-radius:3px;color:#ccc;font-family:monospace;font-size:10px;padding:4px;cursor:pointer;">Copy log</button>
+      </div>
+    </div>
+    <div style="color:#9ca3af;margin:8px 0 2px;">Snapshots:</div>
+    <div id="memdiag-list" style="max-height:160px;overflow-y:auto;font-size:10px;line-height:1.4;color:#ddd;"></div>
+  `;
+  document.body.appendChild(panel);
+
+  const $ = id => panel.querySelector('#' + id);
+
+  const readCounts = () => {
+    const main = {
+      g: renderer?.info?.memory?.geometries ?? 0,
+      t: renderer?.info?.memory?.textures ?? 0,
+      p: renderer?.info?.programs?.length ?? 0
+    };
+    const gz = (typeof gizmoRenderer !== 'undefined' && gizmoRenderer) ? {
+      g: gizmoRenderer.info?.memory?.geometries ?? 0,
+      t: gizmoRenderer.info?.memory?.textures ?? 0,
+      p: gizmoRenderer.info?.programs?.length ?? 0
+    } : null;
+    return { main, gizmo: gz };
+  };
+
+  const refresh = () => {
+    const c = readCounts();
+    $('memdiag-main').textContent =
+      `geometries: ${c.main.g}\ntextures:   ${c.main.t}\nprograms:   ${c.main.p}`;
+    $('memdiag-gizmo').textContent = c.gizmo
+      ? `geometries: ${c.gizmo.g}\ntextures:   ${c.gizmo.t}`
+      : '(not available)';
+  };
+
+  const renderList = () => {
+    const list = $('memdiag-list');
+    if (snapshots.length === 0) {
+      list.innerHTML = '<span style="color:#666;font-style:italic;">(none yet — click Snapshot)</span>';
+      return;
+    }
+    // Newest first; auto-truncate long labels in display only.
+    list.innerHTML = snapshots.slice().reverse().map(s => {
+      const gz = s.gizmo ? ` | gz g=${s.gizmo.g} t=${s.gizmo.t}` : '';
+      return `<div>${s.ts}  ${s.label}  g=${s.main.g} t=${s.main.t} p=${s.main.p}${gz}</div>`;
+    }).join('');
+  };
+
+  const snapshot = (label) => {
+    const c = readCounts();
+    const ts = new Date().toTimeString().slice(0, 8); // HH:MM:SS
+    snapshots.push({ ts, label: label || `snapshot ${snapshots.length + 1}`, main: c.main, gizmo: c.gizmo });
+    if (snapshots.length > MAX_SNAPSHOTS) snapshots.shift();
+    renderList();
+  };
+
+  const show = () => {
+    panel.style.display = 'block';
+    panelVisible = true;
+    refresh();
+    refreshTimer = setInterval(refresh, 1000);
+  };
+  const hide = () => {
+    panel.style.display = 'none';
+    panelVisible = false;
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  };
+
+  btn.addEventListener('click', () => { panelVisible ? hide() : show(); });
+  $('memdiag-close').addEventListener('click', hide);
+
+  // Inline-input snapshot flow (window.prompt is a no-op in Electron's
+  // renderer since v6 — silently returns null with no UI). The text input
+  // sits beside the Snap button; empty value falls back to an auto-numbered
+  // label. Enter in the input is equivalent to clicking Snap.
+  const labelInput = $('memdiag-label');
+  const takeSnapshot = () => {
+    const def = `snapshot ${snapshots.length + 1}`;
+    const raw = (labelInput.value || '').trim();
+    snapshot(raw || def);
+    labelInput.value = '';
+    labelInput.focus();
+  };
+  $('memdiag-snap').addEventListener('click', takeSnapshot);
+  labelInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); takeSnapshot(); }
+  });
+
+  $('memdiag-clear').addEventListener('click', () => {
+    snapshots.length = 0;
+    renderList();
+  });
+
+  // Copy log — serialize all snapshots to plain text and write to clipboard.
+  // Useful in Parsec / no-DevTools sessions: paste straight into chat.
+  $('memdiag-copy').addEventListener('click', async () => {
+    if (snapshots.length === 0) {
+      if (typeof showToast === 'function') showToast('No snapshots to copy.');
+      return;
+    }
+    const lines = [`# Refluent memory diagnostics — ${snapshots.length} snapshot(s)`];
+    snapshots.forEach(s => {
+      const gz = s.gizmo ? ` | gz g=${s.gizmo.g} t=${s.gizmo.t}` : '';
+      lines.push(`${s.ts}  ${s.label}  g=${s.main.g} t=${s.main.t} p=${s.main.p}${gz}`);
+    });
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      if (typeof showToast === 'function') showToast(`Copied ${snapshots.length} snapshot(s).`);
+    } catch (err) {
+      // Fallback: stash on a temp textarea + execCommand('copy')
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (typeof showToast === 'function') showToast(`Copied ${snapshots.length} snapshot(s).`);
+      } catch (err2) {
+        if (typeof showToast === 'function') showToast('Could not copy to clipboard.');
+      }
+    }
+  });
+
+  renderList();
+}
+initMemoryDiagnostics();
+
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
@@ -1655,6 +1891,7 @@ function updateLayersPanel() {
 
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (obj && obj.userData && obj.userData.isUserObject) _disposeObject3D(obj);
       scene.remove(obj);
       if (selectedObject === obj) {
         selectedObject = null;
@@ -1755,6 +1992,7 @@ renderer.domElement.addEventListener('wheel', (e) => {
 
 const deleteSelection = () => {
   if (selectedObject) {
+    if (selectedObject.userData && selectedObject.userData.isUserObject) _disposeObject3D(selectedObject);
     scene.remove(selectedObject);
     selectedObject = null;
     scalePanel.classList.add('hidden');
@@ -1775,7 +2013,10 @@ document.getElementById('clear-scene-btn').addEventListener('click', async () =>
   const proceed = await checkUnsavedBeforeAction('clear the scene');
   if (!proceed) return;
   const toRemove = scene.children.filter(c => c.userData.isUserObject);
-  toRemove.forEach(obj => scene.remove(obj));
+  toRemove.forEach(obj => {
+    if (obj.userData && obj.userData.isUserObject) _disposeObject3D(obj);
+    scene.remove(obj);
+  });
   if (selectedObject) {
     selectedObject = null;
     scalePanel.classList.add('hidden');
@@ -1789,6 +2030,7 @@ document.getElementById('clear-scene-btn').addEventListener('click', async () =>
   // Wipe pipeline state + rebuild both panels from clean templates
   if (typeof resetPipeline === 'function') resetPipeline();
   markSceneModified();
+  logRendererMemory('after-clear-scene');
 });
 
 function getMouseNDC(event) {
@@ -3943,7 +4185,10 @@ function addToRecentScenes(filePath, name, thumbnail) {
 
 function _clearSceneSilently() {
   const toRemove = scene.children.filter(c => c.userData && c.userData.isUserObject);
-  toRemove.forEach(obj => scene.remove(obj));
+  toRemove.forEach(obj => {
+    if (obj.userData && obj.userData.isUserObject) _disposeObject3D(obj);
+    scene.remove(obj);
+  });
   if (selectedObject) {
     selectedObject = null;
     hideObjectPopup();
@@ -3955,6 +4200,7 @@ function _clearSceneSilently() {
   boxCount = 0;
   sphereCount = 0;
   updateLayersPanel();
+  logRendererMemory('after-clear-silent');
 }
 
 function verifySaveData(sceneData) {
@@ -4588,6 +4834,13 @@ window.addEventListener('keydown', (e) => {
   } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
     e.preventDefault();
     newScene();
+  } else if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
+    // Debug: dump renderer memory stats (geometries / textures / programs / draw calls)
+    // for both the main viewport renderer and the axis-gizmo renderer.
+    // Ctrl+Alt+M (Ctrl+Shift+M conflicts with some remote-access tools).
+    // Also available as window.logRendererMemory() in the DevTools console.
+    e.preventDefault();
+    logRendererMemory('shortcut');
   }
 });
 
